@@ -1,0 +1,17 @@
+{
+  "name": "@ebt/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ebt/shared": "1.0.0",
+    "@fastify/websocket": "^11.3.7",
+    "@prisma/client": "7.10.1",
+    "dotenv": "^17.0.0",
+    "fastify": "^5.0.0",
+    "ws": "^8.18.0",
+    "@prisma/adapter-libsql": "7.10.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0"
+  }
+}

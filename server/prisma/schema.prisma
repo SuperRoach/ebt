@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Device {
+  id          String      @id
+  displayName String
+  apiKeyHash  String      @unique
+  samples     GpsSample[]
+}
+
+model GpsSample {
+  deviceId           String
+  device             Device   @relation(fields: [deviceId], references: [id])
+  sequence           String
+  captureHash        String
+  timestamp          DateTime
+  receivedAt         DateTime
+  protocolVersion    Int
+  firmwareVersion    String
+  recordingSessionId String
+  recordingState     String
+  transport          String
+  batteryVoltage     Float
+  latitude           Float?
+  longitude          Float?
+  speedMps           Float?
+  headingDeg         Float?
+  fixValid           Boolean
+  satelliteCount     Int
+  hdop               Float?
+
+  @@id([deviceId, sequence])
+  @@index([deviceId, timestamp, sequence])
+}

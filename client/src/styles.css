@@ -1,0 +1,176 @@
+:root {
+  font-family: "Inter", system-ui, sans-serif;
+  color: var(--ink);
+  background: #edf4f8;
+  font-synthesis: none;
+  /* Lucas Primary School website palette. */
+  --school-navy: #003e6a;
+  --school-blue: #00aae7;
+  --school-navy-hover: #075581;
+  --ink: #172d40;
+  --muted: #465c6d;
+  --border: #c7d7e2;
+  --paper: #fff;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+button, select { min-height: 44px; }
+button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.55rem 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:hover { background: #e8f5fb; }
+button:disabled { opacity: 0.62; cursor: default; }
+:focus-visible { outline: 3px solid var(--school-navy); outline-offset: 3px; }
+h1, h2, h3, p, dl, dd { margin: 0; }
+
+.masthead { background: var(--school-navy); border-bottom: 4px solid var(--school-blue); color: white; }
+.masthead-inner, main { width: min(100% - 3rem, 1450px); margin-inline: auto; }
+.masthead-inner { display: flex; align-items: center; gap: 1rem; padding-block: 1.1rem; }
+.school-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 3rem;
+  height: 3rem;
+  border-radius: 8px;
+  background: var(--school-blue);
+  color: #06293e;
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: -0.07em;
+}
+.brand p { font-size: 0.78rem; font-weight: 700; color: #e2f3fc; }
+.brand h1 { font-size: clamp(1.05rem, 3vw, 1.65rem); letter-spacing: -0.035em; line-height: 1.15; }
+.admin-button { margin-left: auto; color: white; background: transparent; border-color: #8db4cc; }
+.admin-button:hover { background: var(--school-navy-hover); }
+.admin-button:focus-visible { outline-color: var(--school-blue); }
+
+main { padding-block: 2rem; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 1.2rem; }
+.page-heading h2 { color: var(--school-navy); font-size: clamp(1.85rem, 4vw, 3rem); letter-spacing: -0.055em; line-height: 1.05; }
+.page-heading p { color: var(--muted); margin-top: 0.35rem; }
+.connection, .cart-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.34rem 0.55rem;
+  border-radius: 6px;
+  background: #e7edf2;
+  color: #384c5c;
+  font-size: 0.77rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.connection::before, .cart-status::before { content: ""; width: 0.48rem; height: 0.48rem; border-radius: 50%; background: currentColor; }
+.connected, .live { background: #def1d8; color: #205331; }
+.reconnecting, .delayed { background: #fff0ce; color: #724500; }
+.no-gps-fix { background: #f9e4e0; color: #842a20; }
+.demo-banner, .notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+.demo-banner { background: #ffe499; border: 1px solid #a46a05; color: #462d00; }
+.demo-banner strong { font-size: 0.98rem; }
+.notice { background: #fff; border: 1px solid var(--border); }
+
+.dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); align-items: start; gap: 1.15rem; }
+.map-panel, .cart-card, .empty { background: var(--paper); border: 1px solid var(--border); border-radius: 10px; }
+.map-panel { overflow: hidden; }
+.panel-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.65rem; padding: 0.85rem 1rem; }
+.panel-heading h2, .cart-list > h2 { color: var(--school-navy); font-size: 1.08rem; letter-spacing: -0.02em; }
+.map-actions, .follow { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; font-size: 0.875rem; }
+select, input:not([type="checkbox"]) {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  color: var(--ink);
+  padding: 0.5rem;
+}
+.follow { font-weight: 700; }
+.follow select { max-width: min(10rem, 38vw); }
+.map-frame { position: relative; isolation: isolate; }
+.map-surface { width: 100%; height: clamp(455px, 61vh, 720px); background: #dce8f0; }
+.map-layers {
+  position: absolute;
+  z-index: 500;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  background: #fff;
+  border-radius: 8px;
+  padding: 3px;
+  box-shadow: 0 1px 8px #003e6a3b;
+}
+.map-layers button { border-color: transparent; }
+.map-layers button[aria-pressed="true"] { background: var(--school-navy); color: white; }
+.tile-error { position: absolute; z-index: 500; top: 4.25rem; right: 0.75rem; background: white; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.78rem; }
+.map-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; padding: 0.75rem 1rem; color: var(--muted); font-size: 0.82rem; }
+.trail-key { display: inline-block; width: 1.15rem; border-top: 2px dashed currentColor; vertical-align: middle; margin-right: 0.2rem; }
+.cart-marker span, .cart-number { display: grid; place-items: center; border-radius: 50%; color: white; font-weight: 800; }
+.cart-marker span { width: 100%; height: 100%; border: 2px solid white; box-shadow: 0 1px 5px #172d4080; font-size: 0.85rem; }
+.cart-map-label { width: max-content; max-width: min(12rem, 45vw); white-space: normal; overflow-wrap: anywhere; font-weight: 800; font-size: 0.8rem; color: var(--ink); }
+.leaflet-bottom.leaflet-right { max-width: calc(100% - 70px); }
+.map-surface .leaflet-control-zoom a { width: 44px; height: 44px; line-height: 44px; }
+
+.cart-list { display: grid; gap: 0.75rem; min-width: 0; }
+.cart-card { padding: 0.85rem; border-top: 4px solid; }
+.cart-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.5rem; }
+.cart-number { width: 1.85rem; height: 1.85rem; }
+.cart-name { min-width: 0; overflow-wrap: anywhere; }
+.cart-name h3 { font-size: 1rem; line-height: 1.2; }
+.cart-name p, .metrics dt { color: var(--muted); font-size: 0.75rem; }
+.demo-tag { color: #724500; font-size: 0.78rem; font-weight: 800; margin-top: 0.5rem; }
+.speed { margin-block: 0.55rem; font-size: 2rem; line-height: 1; letter-spacing: -0.06em; font-weight: 850; font-variant-numeric: tabular-nums; }
+.speed span { font-size: 0.82rem; color: var(--muted); letter-spacing: 0; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.55rem 0.4rem; }
+.metrics .updated { grid-column: span 2; }
+.metrics dd { margin-top: 0.1rem; font-size: 0.8rem; font-weight: 700; }
+.capitalize { text-transform: capitalize; }
+.visibility { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; margin-top: 0.55rem; border-top: 1px solid var(--border); font-size: 0.85rem; font-weight: 700; cursor: pointer; }
+.visibility input { width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--school-navy); }
+.empty { padding: 1rem; color: var(--muted); }
+
+dialog { width: min(440px, 100% - 2rem); padding: 1rem; color: var(--ink); border: 1px solid var(--border); border-radius: 12px; }
+dialog::backdrop { background: #0b2237b5; }
+.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.8rem; }
+dialog form, dialog label { display: grid; gap: 0.5rem; }
+dialog form { gap: 0.9rem; }
+dialog label { font-weight: 700; }
+dialog input { width: 100%; min-height: 44px; }
+.primary-button { background: var(--school-navy); color: white; }
+.primary-button:hover { background: var(--school-navy-hover); }
+.form-error { color: #842a20; }
+.form-notice { color: #205331; }
+
+@media (max-width: 920px) {
+  .dashboard { grid-template-columns: minmax(0, 1fr); }
+  .cart-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cart-list > h2, .empty { grid-column: 1 / -1; }
+  .map-surface { height: clamp(340px, 53vh, 590px); }
+}
+
+@media (max-width: 580px) {
+  .masthead-inner, main { width: calc(100% - 1.25rem); }
+  .masthead-inner { gap: 0.55rem; padding-block: 0.75rem; }
+  .school-mark { flex-basis: 2rem; height: 2rem; font-size: 0.9rem; }
+  .admin-button { font-size: 0.78rem; padding-inline: 0.45rem; }
+  main { padding-block: 1rem; }
+  .page-heading { align-items: flex-start; }
+  .page-heading p { font-size: 0.82rem; }
+  .panel-heading { padding: 0.65rem; }
+  .map-caption { padding-inline: 0.65rem; }
+  .cart-list { grid-template-columns: minmax(0, 1fr); }
+}
