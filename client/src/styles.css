@@ -138,6 +138,22 @@ select, input:not([type="checkbox"]) {
 .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.55rem 0.4rem; }
 .metrics .updated { grid-column: span 2; }
 .metrics dd { margin-top: 0.1rem; font-size: 0.8rem; font-weight: 700; }
+.battery-reading { position: relative; cursor: help; text-decoration: underline dotted; text-underline-offset: 0.2em; }
+.battery-tooltip {
+  position: absolute;
+  z-index: 1;
+  bottom: 100%;
+  left: 0;
+  visibility: hidden;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.3rem;
+  background: var(--school-navy);
+  color: white;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.battery-reading:hover .battery-tooltip,
+.battery-reading:focus .battery-tooltip { visibility: visible; }
 .capitalize { text-transform: capitalize; }
 .visibility { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; margin-top: 0.55rem; border-top: 1px solid var(--border); font-size: 0.85rem; font-weight: 700; cursor: pointer; }
 .visibility input { width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--school-navy); }

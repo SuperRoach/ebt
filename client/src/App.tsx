@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Admin } from "./Admin.js";
 import type { StoredSample } from "./api.js";
 import { CartMap, type MapCart } from "./CartMap.js";
@@ -12,13 +12,26 @@ const localTime = new Intl.DateTimeFormat("en-AU", {
 
 function Telemetry({ sample, status }: { sample: StoredSample | undefined; status: MapCart["status"] }) {
   const speed = status === "Live" && sample?.speedMps != null ? (sample.speedMps * 3.6).toFixed(1) : null;
+  const batteryTooltipId = useId();
+  const batteryVoltage = sample?.batteryVoltage;
+  // Estimate charge from voltage for the tracker's single-cell lithium battery.
+  const emptyVoltage = 3.3;
+  const fullVoltage = 4.2;
+  const batteryPercent = batteryVoltage == null ? null :
+    Math.round(Math.min(1, Math.max(0, (batteryVoltage - emptyVoltage) / (fullVoltage - emptyVoltage))) * 100);
   return <>
     <p className="speed">{speed ?? "—"} <span>km/h</span></p>
     <dl className="metrics">
       <div><dt>Recording</dt><dd className="capitalize">{sample?.recordingState ?? "—"}</dd></div>
       <div><dt>GPS fix</dt><dd>{sample ? (sample.fixValid ? "Valid" : "No fix") : "—"}</dd></div>
       <div><dt>Satellites</dt><dd>{sample?.satelliteCount ?? "—"}</dd></div>
-      <div><dt>Battery</dt><dd>{sample ? `${sample.batteryVoltage.toFixed(2)} V` : "—"}</dd></div>
+      <div><dt>Battery</dt><dd>{batteryVoltage != null ?
+        <span className="battery-reading" tabIndex={0} aria-describedby={batteryTooltipId}>
+          {batteryPercent}%
+          <span className="battery-tooltip" id={batteryTooltipId} role="tooltip">
+            Estimated charge · {batteryVoltage.toFixed(2)} V
+          </span>
+        </span> : "—"}</dd></div>
       <div><dt>Transport</dt><dd>{sample ? (sample.transport === "wifi" ? "Wi-Fi" : "4G") : "—"}</dd></div>
       <div className="updated"><dt>Last update (Vic)</dt><dd>{sample ?
         <time dateTime={sample.timestamp}>{localTime.format(new Date(sample.timestamp))}</time> : "No data yet"}</dd></div>
