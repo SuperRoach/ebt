@@ -1,0 +1,34 @@
+app = "ebt-gps-api-5c36c3"
+primary_region = "syd"
+kill_signal = "SIGTERM"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  DATABASE_URL = "file:/data/ebt.db"
+
+[[mounts]]
+  source = "ebt_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    grace_period = "30s"
+    interval = "15s"
+    timeout = "3s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
