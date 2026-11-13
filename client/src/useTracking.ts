@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { history, latest, listDevices, renameDevice, socketUrl, type Device, type StoredSample } from "./api.js";
+import { history, listDevices, socketUrl, updateDevice, type Device, type DeviceSettings, type StoredSample } from "./api.js";
 import { connectTelemetry, type Connection } from "./telemetrySocket.js";
-import { fromEvent, mergeSamples, TRAIL_MS } from "./tracking.js";
+import { fromEvent, mergeSamples } from "./tracking.js";
 
 export function useTracking() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [samples, setSamples] = useState<Record<string, StoredSample[]>>({});
   const [connection, setConnection] = useState<Connection>("connecting");
-  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set());
+  const [streamed, setStreamed] = useState<Record<string, StoredSample>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now);
   const [refreshKey, setRefreshKey] = useState(0);
-  const namesEdited = useRef(new Map<string, Device>());
+  const editedDevices = useRef(new Map<string, Device>());
+  const openedAt = useRef(now);
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(Date.now()), 1000);
@@ -25,10 +26,6 @@ export function useTracking() {
     let needsRetry = true;
     const lifetime = new AbortController();
 
-    function confirm(id: string) {
-      setConfirmed((current) => current.has(id) ? current : new Set([...current, id]));
-    }
-
     function merge(id: string, incoming: StoredSample[]) {
       if (lifetime.signal.aborted || !incoming.length) return;
       const capturedNow = Date.now();
@@ -40,23 +37,19 @@ export function useTracking() {
       const controller = new AbortController();
       active = controller;
       const { signal } = controller;
-      const namesAtStart = new Map(namesEdited.current);
+      const editsAtStart = new Map(editedDevices.current);
       try {
         const { devices: roster } = await listDevices(signal);
         if (signal.aborted) return;
         setDevices(roster.map((device) => {
-          const renamed = namesEdited.current.get(device.id);
-          return renamed && renamed !== namesAtStart.get(device.id) ? renamed : device;
+          const edited = editedDevices.current.get(device.id);
+          return edited && edited !== editsAtStart.get(device.id) ? edited : device;
         }));
-        const from = new Date(Date.now() - TRAIL_MS).toISOString();
-        const results = await Promise.allSettled(roster.flatMap(({ id }) => [
-          latest(id, signal).then(({ sample }) => {
-            if (signal.aborted) return;
-            merge(id, sample ? [sample] : []);
-            if (connected) confirm(id);
+        const results = await Promise.allSettled(roster.map(({ id }) =>
+          history(id, signal).then(({ samples: trail }) => {
+            if (!signal.aborted) merge(id, trail);
           }),
-          history(id, from, signal).then(({ samples: trail }) => merge(id, trail)),
-        ]));
+        ));
         if (signal.aborted) return;
         needsRetry = results.some(({ status }) => status === "rejected");
         setError(needsRetry ? "Some cart data could not be loaded. Retrying…" : "");
@@ -73,12 +66,22 @@ export function useTracking() {
       onState(state) {
         connected = state === "connected";
         setConnection(state);
-        if (!connected) setConfirmed(new Set());
+        if (!connected) setStreamed({});
         if (connected) void refresh();
       },
       onTelemetry(event) {
-        merge(event.deviceId, fromEvent(event));
-        setNow(Date.now());
+        const incoming = fromEvent(event);
+        const receivedNow = Date.now();
+        merge(event.deviceId, incoming);
+        const fresh = incoming.filter((sample) => Date.parse(sample.timestamp) >= openedAt.current);
+        if (fresh.length) {
+          setStreamed((current) => {
+            const previous = current[event.deviceId];
+            const [newest] = mergeSamples(previous ? [previous] : [], fresh, receivedNow);
+            return newest === previous ? current : { ...current, [event.deviceId]: newest };
+          });
+        }
+        setNow(receivedNow);
       },
     });
     void refresh();
@@ -93,11 +96,11 @@ export function useTracking() {
     };
   }, [refreshKey]);
 
-  async function rename(id: string, name: string, token: string) {
-    const { device } = await renameDevice(id, name, token);
-    namesEdited.current.set(id, device);
+  async function saveDevice(id: string, settings: DeviceSettings, token: string) {
+    const { device } = await updateDevice(id, settings, token);
+    editedDevices.current.set(id, device);
     setDevices((current) => current.map((entry) => entry.id === id ? device : entry));
   }
 
-  return { devices, samples, connection, confirmed, loading, error, now, rename, retry: () => setRefreshKey((key) => key + 1) };
+  return { devices, samples, connection, streamed, loading, error, now, saveDevice, retry: () => setRefreshKey((key) => key + 1) };
 }

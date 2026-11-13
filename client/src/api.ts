@@ -3,7 +3,10 @@ import type { GpsSample, TelemetryBatch } from "@ebt/shared";
 export interface Device {
   id: string;
   displayName: string;
+  colour?: string | null;
 }
+
+export type DeviceSettings = Pick<Device, "displayName" | "colour">;
 
 export interface StoredSample extends Omit<GpsSample, "hdop">,
   Pick<TelemetryBatch, "deviceId" | "firmwareVersion" | "recordingSessionId" | "recordingState" | "transport" | "batteryVoltage"> {
@@ -40,15 +43,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const listDevices = (signal: AbortSignal) => request<{ devices: Device[] }>("", { signal });
-export const latest = (id: string, signal: AbortSignal) =>
-  request<{ device: Device; sample: StoredSample | null }>(`/${encodeURIComponent(id)}/latest`, { signal });
+export const history = (id: string, signal: AbortSignal) =>
+  request<{ samples: StoredSample[] }>(`/${encodeURIComponent(id)}/history?limit=200`, { signal });
 
-export const history = (id: string, from: string, signal: AbortSignal) =>
-  request<{ samples: StoredSample[] }>(`/${encodeURIComponent(id)}/history?${new URLSearchParams({ from, limit: "200" })}`, { signal });
-
-export const renameDevice = (id: string, displayName: string, token: string) =>
+export const updateDevice = (id: string, settings: DeviceSettings, token: string) =>
   request<{ device: Device }>(`/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ displayName }),
+    body: JSON.stringify(settings),
   });

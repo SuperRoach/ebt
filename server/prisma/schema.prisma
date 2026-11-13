@@ -10,6 +10,7 @@ datasource db {
 model Device {
   id          String      @id
   displayName String
+  colour      String?
   apiKeyHash  String      @unique
   samples     GpsSample[]
 }

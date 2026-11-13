@@ -72,7 +72,7 @@ test("SQLite telemetry API", async (t) => {
     await db.device.update({ where: { id: "lps-ebt-02" }, data: { displayName: "Second tracker" } });
     await seedDevices(db, keys);
     assert.deepEqual((await app.inject("/api/v1/devices")).json(), {
-      devices: [{ id: "lps-ebt-01", displayName: "Tracker 1" }, { id: "lps-ebt-02", displayName: "Second tracker" }],
+      devices: [{ id: "lps-ebt-01", displayName: "Tracker 1", colour: null }, { id: "lps-ebt-02", displayName: "Second tracker", colour: null }],
     });
     assert.equal((await app.inject("/api/v1/devices/lps-ebt-01/latest")).json().sample, null);
     assert.equal((await app.inject("/api/v1/devices/missing/latest")).statusCode, 404);
@@ -98,22 +98,26 @@ test("SQLite telemetry API", async (t) => {
     assert.equal(await db.gpsSample.count(), 0);
   });
 
-  await t.test("requires admin authorization and persists valid display names", async () => {
-    const rename = (id: string, displayName: string, token: string) => app.inject({
+  await t.test("requires admin authorization and persists device settings", async () => {
+    const update = (id: string, payload: { displayName?: string; colour?: string | null }, token = adminToken) => app.inject({
       method: "PATCH",
       url: `/api/v1/devices/${id}`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { displayName },
+      payload,
     });
-    assert.equal((await rename("lps-ebt-01", "Cart A", keys["lps-ebt-01"])).statusCode, 401);
-    assert.equal((await rename("lps-ebt-01", " ", adminToken)).statusCode, 400);
-    assert.equal((await rename("lps-ebt-01", "a".repeat(101), adminToken)).statusCode, 400);
-    assert.equal((await rename("missing", "Cart A", adminToken)).statusCode, 404);
-    const device = { id: "lps-ebt-01", displayName: "Cart A" };
-    assert.deepEqual((await rename(device.id, "  Cart A  ", adminToken)).json(), { device });
+    assert.equal((await update("lps-ebt-01", { colour: "#123abc" }, keys["lps-ebt-01"])).statusCode, 401);
+    assert.equal((await update("lps-ebt-01", { displayName: " " })).statusCode, 400);
+    assert.equal((await update("lps-ebt-01", { displayName: "a".repeat(101) })).statusCode, 400);
+    assert.equal((await update("lps-ebt-01", { colour: "red" })).statusCode, 400);
+    assert.equal((await update("lps-ebt-01", {})).statusCode, 400);
+    assert.equal((await update("missing", { displayName: "Cart A" })).statusCode, 404);
+    const device = { id: "lps-ebt-01", displayName: "Cart A", colour: "#123abc" };
+    assert.deepEqual((await update(device.id, { colour: "#123ABC" })).json().device.colour, device.colour);
+    assert.deepEqual((await update(device.id, { displayName: "  Cart A  " })).json(), { device });
     assert.deepEqual((await app.inject(`/api/v1/devices/${device.id}/latest`)).json(), { device, sample: null });
     await seedDevices(db, keys);
     assert.deepEqual((await app.inject("/api/v1/devices")).json().devices[0], device);
+    assert.deepEqual((await update(device.id, { colour: null })).json(), { device: { ...device, colour: null } });
   });
 
   await t.test("broadcasts committed new samples, acknowledges replay, and supports both trackers", async () => {

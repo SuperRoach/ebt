@@ -1,8 +1,8 @@
-import { useId, useState } from "react";
+import { useId, useState, type CSSProperties } from "react";
 import { Admin } from "./Admin.js";
 import type { StoredSample } from "./api.js";
 import { CartMap, type MapCart } from "./CartMap.js";
-import { cartStatus, isDemo, position, trailSegments } from "./tracking.js";
+import { cartStatus, isDemo, lastPositionSample, position, trailSegments } from "./tracking.js";
 import { useTracking } from "./useTracking.js";
 
 const colours = ["#1551b0", "#9c360d", "#5b3b9c", "#126d5d"];
@@ -20,18 +20,23 @@ function Telemetry({ sample, status }: { sample: StoredSample | undefined; statu
   const batteryPercent = batteryVoltage == null ? null :
     Math.round(Math.min(1, Math.max(0, (batteryVoltage - emptyVoltage) / (fullVoltage - emptyVoltage))) * 100);
   return <>
-    <p className="speed">{speed ?? "—"} <span>km/h</span></p>
-    <dl className="metrics">
-      <div><dt>Recording</dt><dd className="capitalize">{sample?.recordingState ?? "—"}</dd></div>
-      <div><dt>GPS fix</dt><dd>{sample ? (sample.fixValid ? "Valid" : "No fix") : "—"}</dd></div>
-      <div><dt>Satellites</dt><dd>{sample?.satelliteCount ?? "—"}</dd></div>
-      <div><dt>Battery</dt><dd>{batteryVoltage != null ?
+    <dl className="cart-readings">
+      <div><dt>Speed</dt><dd className="speed">{speed ?? "—"} <span>km/h</span></dd></div>
+      <div className="battery-metric"><dt>Battery</dt><dd className="battery-value">{batteryPercent != null && batteryVoltage != null ?
         <span className="battery-reading" tabIndex={0} aria-describedby={batteryTooltipId}>
           {batteryPercent}%
+          <span className="battery-meter" aria-hidden="true">
+            <span style={{ width: `${batteryPercent}%` }} />
+          </span>
           <span className="battery-tooltip" id={batteryTooltipId} role="tooltip">
             Estimated charge · {batteryVoltage.toFixed(2)} V
           </span>
         </span> : "—"}</dd></div>
+    </dl>
+    <dl className="metrics">
+      <div><dt>Recording</dt><dd className="capitalize">{sample?.recordingState ?? "—"}</dd></div>
+      <div><dt>GPS fix</dt><dd>{sample ? (sample.fixValid ? "Valid" : "No fix") : "—"}</dd></div>
+      <div><dt>Satellites</dt><dd>{sample?.satelliteCount ?? "—"}</dd></div>
       <div><dt>Transport</dt><dd>{sample ? (sample.transport === "wifi" ? "Wi-Fi" : "4G") : "—"}</dd></div>
       <div className="updated"><dt>Last update (Vic)</dt><dd>{sample ?
         <time dateTime={sample.timestamp}>{localTime.format(new Date(sample.timestamp))}</time> : "No data yet"}</dd></div>
@@ -40,7 +45,7 @@ function Telemetry({ sample, status }: { sample: StoredSample | undefined; statu
 }
 
 export function App() {
-  const { devices, samples, connection, confirmed, loading, error, now, rename, retry } = useTracking();
+  const { devices, samples, connection, streamed, loading, error, now, saveDevice, retry } = useTracking();
   const [hidden, setHidden] = useState<string[]>([]);
   const [followId, setFollowId] = useState("");
   const [fitRequest, setFitRequest] = useState(0);
@@ -48,16 +53,24 @@ export function App() {
   const carts = devices.map((device, index) => {
     const recent = samples[device.id] ?? [];
     const sample = recent[0];
-    const status = cartStatus(sample, now, connection === "connected" && confirmed.has(device.id));
+    const liveSample = connection === "connected" && sample?.sequence === streamed[device.id]?.sequence;
+    const status = cartStatus(sample, now, liveSample);
+    const fix = lastPositionSample(recent, now);
+    const historical = Boolean(fix && status !== "Live");
     return {
-      device, sample, status, number: index + 1, colour: colours[index % colours.length],
+      device, sample, status, historical, number: index + 1,
+      colour: device.colour ?? (historical ? "#606b75" : colours[index % colours.length]),
+      liveSequence: status === "Live" ? sample?.sequence : undefined,
       demo: Boolean(sample && isDemo(sample)),
-      point: status === "Live" && sample ? position(sample) : null,
-      trail: trailSegments(recent, now),
+      positionDemo: Boolean(fix && isDemo(fix)),
+      point: fix ? position(fix) : null,
+      trail: trailSegments(fix ? recent.slice(recent.indexOf(fix)) : recent, historical && fix ? Date.parse(fix.timestamp) : now),
     };
   });
   const visible = carts.filter(({ device }) => !hidden.includes(device.id));
-  const demo = carts.some((cart) => cart.demo);
+  const onMap = visible.filter(({ point }) => point).length;
+  const historicalOnMap = visible.filter((cart) => cart.historical).length;
+  const demo = carts.some((cart) => cart.demo || cart.positionDemo);
   const connectionText = { connecting: "Connecting", connected: "Feed connected", reconnecting: "Reconnecting" }[connection];
 
   return <>
@@ -68,14 +81,14 @@ export function App() {
           <p>Lucas Primary School</p>
           <h1>Energy Breakthrough</h1>
         </div>
-        <Admin devices={devices} rename={rename} />
+        <Admin devices={devices} defaultColours={colours} saveDevice={saveDevice} />
       </div>
     </header>
     <main>
       <div className="page-heading">
         <div>
           <h2>Cart tracking</h2>
-          <p>Princes Park · Maryborough, Victoria</p>
+          <p><span className="location-pin" aria-hidden="true" />Princes Park · Maryborough, Victoria</p>
         </div>
         <span role="status" className={`connection ${connection}`}>{connectionText}</span>
       </div>
@@ -84,12 +97,15 @@ export function App() {
         <span>Positions marked Demo are generated by the simulator.</span></div>}
       {error && <div className="notice" role="status"><span>{error}</span><button type="button" onClick={retry}>Retry now</button></div>}
       {connection === "reconnecting" && !error &&
-        <div className="notice" role="status">Live feed interrupted. Current markers will return when the feed reconnects.</div>}
+        <div className="notice" role="status">Live feed interrupted. Showing last known positions while reconnecting.</div>}
 
       <div className="dashboard">
         <section className="map-panel" aria-labelledby="map-title">
           <div className="panel-heading">
-            <h2 id="map-title">Circuit map</h2>
+            <div>
+              <h2 id="map-title">Circuit map</h2>
+              <p className="map-count">{onMap} {onMap === 1 ? "cart" : "carts"} on map{historicalOnMap > 0 && ` · ${historicalOnMap} last known`}</p>
+            </div>
             <div className="map-actions">
               <label className="follow">Follow
                 <select aria-label="Follow cart" value={followId} onChange={(event) => setFollowId(event.target.value)} disabled={!visible.length}>
@@ -103,8 +119,8 @@ export function App() {
           <CartMap carts={visible} followId={followId} fitRequest={fitRequest} />
           <div className="map-caption">
             <span><span className="trail-key" aria-hidden="true" /> Past trail · up to 5 minutes</span>
-            {!visible.some(({ point }) => point) && <span>{loading ? "Loading cart positions…" : "No current positions on the map"}</span>}
-            {followId && !visible.find(({ device }) => device.id === followId)?.point && <span>Follow paused until the cart has a current fix</span>}
+            {!onMap && <span>{loading ? "Loading cart positions…" : "No cart positions available"}</span>}
+            {followId && !visible.some(({ device, status }) => device.id === followId && status === "Live") && <span>Follow paused until the cart has a current fix</span>}
           </div>
         </section>
 
@@ -114,9 +130,9 @@ export function App() {
           {!loading && !carts.length && !error && <p className="empty">No tracking devices are registered.</p>}
           {!loading && !carts.length && error && <p className="empty">Device list unavailable.</p>}
           {carts.map(({ device, colour, number, demo: simulated, status, sample }) =>
-            <article className="cart-card" key={device.id} style={{ borderTopColor: colour }}>
+            <article className="cart-card" key={device.id} style={{ "--cart-colour": colour } as CSSProperties}>
               <div className="cart-heading">
-                <span className="cart-number" style={{ background: colour }} aria-hidden="true">{number}</span>
+                <span className="cart-number" aria-hidden="true">{number}</span>
                 <div className="cart-name">
                   <h3>{device.displayName}</h3>
                   <p>{device.id}</p>

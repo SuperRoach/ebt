@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { StoredSample } from "../src/api.js";
-import { cartStatus, isDemo, mergeSamples, trailSegments } from "../src/tracking.js";
+import { cartStatus, isDemo, lastPositionSample, mergeSamples, trailSegments } from "../src/tracking.js";
 
 const now = Date.parse("2026-11-13T06:00:00.000Z");
 function sample(sequence: string, age: number, overrides: Partial<StoredSample> = {}): StoredSample {
@@ -42,8 +42,19 @@ test("REST recovery and replay deduplicate by sequence without replacing newer c
   const equalTime = sample("02", 1000);
   const old = sample("01", 10_000);
   const expired = sample("00", 301_000);
-  assert.deepEqual(mergeSamples([current, equalTime], [old, equalTime, expired], now), [current, equalTime, old]);
+  assert.deepEqual(mergeSamples([current, equalTime], [old, equalTime, expired], now), [current, equalTime, old, expired]);
   assert.deepEqual(mergeSamples([], [expired], now), [expired]);
+});
+
+test("stored positions keep a last known fix and a short trail after the live window expires", () => {
+  const lastFix = sample("02", 360_000);
+  const earlierFix = sample("01", 365_000);
+  const noFix = sample("03", 355_000, { fixValid: false });
+  const stored = mergeSamples([], [noFix, lastFix, earlierFix], now);
+  assert.equal(lastPositionSample(stored, now), lastFix);
+  assert.equal(cartStatus(lastFix, now, false), "Offline");
+  assert.equal(trailSegments(stored.slice(1), Date.parse(lastFix.timestamp)).length, 1);
+  assert.equal(lastPositionSample([noFix], now), undefined);
 });
 
 test("trails break at lost fixes, time gaps, sessions and source changes", () => {

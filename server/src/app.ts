@@ -7,7 +7,7 @@ import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { hashKey } from "./devices.js";
 import { ingest, SequenceConflict } from "./ingest.js";
 
-const deviceSelect = { id: true, displayName: true } as const;
+const deviceSelect = { id: true, displayName: true, colour: true } as const;
 const sampleOrder: Prisma.GpsSampleOrderByWithRelationInput[] = [{ timestamp: "desc" }, { sequence: "desc" }];
 const sampleOmit = { captureHash: true } as const;
 const params = {
@@ -99,14 +99,17 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     devices: await db.device.findMany({ select: deviceSelect, orderBy: { id: "asc" } }),
   }));
 
-  app.patch<{ Params: { id: string }; Body: { displayName: string } }>("/api/v1/devices/:id", {
+  app.patch<{ Params: { id: string }; Body: { displayName?: string; colour?: string | null } }>("/api/v1/devices/:id", {
     schema: {
       params,
       body: {
         type: "object",
-        required: ["displayName"],
+        minProperties: 1,
         additionalProperties: false,
-        properties: { displayName: { type: "string", minLength: 1, maxLength: 100 } },
+        properties: {
+          displayName: { type: "string", minLength: 1, maxLength: 100 },
+          colour: { anyOf: [{ type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, { type: "null" }] },
+        },
       },
     },
   }, async (request, reply) => {
@@ -115,12 +118,13 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     if (!token || !timingSafeEqual(Buffer.from(hashKey(token), "hex"), Buffer.from(hashKey(adminToken), "hex"))) {
       return reply.code(401).send({ error: "Invalid admin token" });
     }
-    const displayName = request.body.displayName.trim();
-    if (!displayName) return reply.code(400).send({ error: "Enter a device name" });
+    const { colour } = request.body;
+    const displayName = request.body.displayName?.trim();
+    if (displayName === "") return reply.code(400).send({ error: "Enter a device name" });
     try {
       const device = await db.device.update({
         where: { id: request.params.id },
-        data: { displayName },
+        data: { displayName, colour: typeof colour === "string" ? colour.toLowerCase() : colour },
         select: deviceSelect,
       });
       return { device };

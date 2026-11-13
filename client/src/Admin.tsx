@@ -1,13 +1,15 @@
 import { useRef, useState, type FormEvent } from "react";
-import type { Device } from "./api.js";
+import type { Device, DeviceSettings } from "./api.js";
 
-export function Admin({ devices, rename }: {
+export function Admin({ devices, defaultColours, saveDevice }: {
   devices: Device[];
-  rename: (id: string, name: string, token: string) => Promise<void>;
+  defaultColours: readonly string[];
+  saveDevice: (id: string, settings: DeviceSettings, token: string) => Promise<void>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
+  const [colour, setColour] = useState<string | null>(null);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
@@ -15,7 +17,9 @@ export function Admin({ devices, rename }: {
 
   function select(deviceId: string) {
     setId(deviceId);
-    setName(devices.find((device) => device.id === deviceId)?.displayName ?? "");
+    const device = devices.find((entry) => entry.id === deviceId);
+    setName(device?.displayName ?? "");
+    setColour(device?.colour ?? null);
     setNotice("");
     setError("");
   }
@@ -27,11 +31,11 @@ export function Admin({ devices, rename }: {
     setError("");
     setNotice("");
     try {
-      await rename(id, name.trim(), token.trim());
+      await saveDevice(id, { displayName: name.trim(), colour }, token.trim());
       setName(name.trim());
-      setNotice("Device name saved.");
+      setNotice("Device settings saved.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The device name could not be saved.");
+      setError(reason instanceof Error ? reason.message : "Device settings could not be saved.");
     } finally {
       setSaving(false);
     }
@@ -58,13 +62,22 @@ export function Admin({ devices, rename }: {
         <label>Display name
           <input value={name} onChange={(event) => { setName(event.target.value); setNotice(""); }} maxLength={100} required disabled={saving} />
         </label>
+        <div className="device-colour">
+          <label>Cart colour
+            <input type="color" value={colour ?? defaultColours[Math.max(0, devices.findIndex((device) => device.id === id)) % defaultColours.length]}
+              disabled={saving} onChange={(event) => { setColour(event.target.value); setNotice(""); }} />
+          </label>
+          <button type="button" disabled={saving || colour === null} onClick={() => { setColour(null); setNotice(""); }}>
+            Use default colour
+          </button>
+        </div>
         <label>Admin token
           <input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" required disabled={saving} />
         </label>
         {error && <p role="alert" className="form-error">{error}</p>}
         {notice && <p role="status" className="form-notice">{notice}</p>}
         <button type="submit" className="primary-button" disabled={saving || !name.trim() || !token.trim()}>
-          {saving ? "Saving…" : "Save name"}
+          {saving ? "Saving…" : "Save settings"}
         </button>
       </form> : <p>No devices are available to edit.</p>}
     </dialog>

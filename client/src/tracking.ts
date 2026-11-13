@@ -5,6 +5,7 @@ export const OFFLINE_MS = 90_000;
 export const TRAIL_MS = 5 * 60_000;
 const FUTURE_TOLERANCE_MS = 5_000;
 const SAMPLE_LIMIT = 200;
+const HISTORY_POINTS = 10;
 
 function captureTime(sample: StoredSample) {
   const captured = Date.parse(sample.timestamp);
@@ -21,10 +22,21 @@ export function fromEvent(event: TelemetryEvent): StoredSample[] {
 export function mergeSamples(existing: StoredSample[], incoming: StoredSample[], now: number) {
   const bySequence = new Map(existing.map((sample) => [sample.sequence, sample]));
   for (const sample of incoming) bySequence.set(sample.sequence, sample);
-  return [...bySequence.values()]
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.sequence.localeCompare(a.sequence))
-    .filter((sample, index) => index === 0 || Date.parse(sample.timestamp) >= now - TRAIL_MS)
+  const sorted = [...bySequence.values()]
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.sequence.localeCompare(a.sequence));
+  const retained = sorted
+    .filter((sample, index) => index < HISTORY_POINTS || Date.parse(sample.timestamp) >= now - TRAIL_MS)
     .slice(0, SAMPLE_LIMIT);
+  const lastFix = lastPositionSample(sorted, now);
+  if (lastFix && !retained.includes(lastFix)) {
+    if (retained.length === SAMPLE_LIMIT) retained.pop();
+    retained.push(lastFix);
+  }
+  return retained;
+}
+
+export function lastPositionSample(samples: StoredSample[], now: number) {
+  return samples.find((sample) => captureTime(sample) <= now + FUTURE_TOLERANCE_MS && position(sample));
 }
 
 export type CartStatus = "Live" | "Delayed" | "Offline" | "No GPS Fix";

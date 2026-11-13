@@ -10,8 +10,10 @@ export interface MapCart {
   device: Device;
   number: number;
   colour: string;
+  liveSequence?: string;
   status: CartStatus;
-  demo: boolean;
+  historical: boolean;
+  positionDemo: boolean;
   point: ReturnType<typeof position>;
   trail: ReturnType<typeof trailSegments>;
 }
@@ -38,7 +40,12 @@ export function CartMap({ carts, followId, fitRequest }: {
 }) {
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<L.Map>(null);
-  const layers = useRef(new Map<string, { trail: L.Polyline; marker?: L.Marker }>());
+  const layers = useRef(new Map<string, {
+    trail: L.Polyline;
+    marker?: L.Marker;
+    glyph?: HTMLSpanElement;
+    lastPulsedSequence?: string;
+  }>());
   const lastFit = useRef(0);
   const [basemap, setBasemap] = useState<Basemap>("Street");
   const [tileError, setTileError] = useState(false);
@@ -82,29 +89,44 @@ export function CartMap({ carts, followId, fitRequest }: {
     }
 
     for (const cart of carts) {
-      const { device, number, colour, demo, point, trail } = cart;
+      const { device, number, colour, historical, positionDemo, point, trail, liveSequence } = cart;
       let layer = layers.current.get(device.id);
       if (!layer) {
         layer = { trail: L.polyline([], { color: colour, weight: 4, opacity: 0.84, dashArray: "5 7", interactive: false }).addTo(map) };
         layers.current.set(device.id, layer);
       }
-      layer.trail.setLatLngs(trail);
+      layer.trail.setStyle({ color: colour }).setLatLngs(trail);
       if (!point) {
         layer.marker?.remove();
         layer.marker = undefined;
+        layer.glyph = undefined;
         continue;
       }
       if (!layer.marker) {
         const glyph = document.createElement("span");
-        glyph.textContent = String(number);
-        glyph.style.background = colour;
+        layer.glyph = glyph;
         const icon = L.divIcon({ className: "cart-marker", html: glyph, iconSize: [30, 30], iconAnchor: [15, 15] });
         layer.marker = L.marker(point, { icon, keyboard: false }).addTo(map);
         layer.marker.bindTooltip("", { permanent: true, direction: "right", offset: [17, 0], className: "cart-map-label" });
       }
+      if (layer.glyph) {
+        layer.glyph.textContent = String(number);
+        layer.glyph.style.background = colour;
+      }
       const label = document.createElement("span");
-      label.textContent = demo ? `${device.displayName} · Demo` : device.displayName;
+      label.textContent = device.displayName + (positionDemo ? " · Demo" : "") + (historical ? " · Last known" : "");
       layer.marker.setLatLng(point).setTooltipContent(label);
+      if (liveSequence !== undefined && liveSequence !== layer.lastPulsedSequence) {
+        layer.lastPulsedSequence = liveSequence;
+        const marker = layer.marker.getElement();
+        marker?.querySelector(".cart-pulse")?.remove();
+        const pulse = document.createElement("i");
+        pulse.className = "cart-pulse";
+        pulse.style.setProperty("--pulse-colour", colour);
+        pulse.setAttribute("aria-hidden", "true");
+        pulse.addEventListener("animationend", () => pulse.remove(), { once: true });
+        marker?.prepend(pulse);
+      }
     }
 
     if (fitRequest !== lastFit.current) {
@@ -113,7 +135,7 @@ export function CartMap({ carts, followId, fitRequest }: {
       if (points.length) map.fitBounds(L.latLngBounds(points), { padding: [54, 54], maxZoom: 17, animate: false });
       else map.setView(circuit, 16);
     } else {
-      const followed = carts.find(({ device }) => device.id === followId)?.point;
+      const followed = carts.find(({ device, status }) => device.id === followId && status === "Live")?.point;
       if (followed && !map.getCenter().equals(followed)) map.panTo(followed, { animate: false });
     }
   }, [carts, followId, fitRequest]);
