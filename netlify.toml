@@ -1,0 +1,12 @@
+[build]
+  command = "npm run build"
+  publish = "client/dist"
+  ignore = '''
+test -n "$CACHED_COMMIT_REF" &&
+test -n "$COMMIT_REF" &&
+test "$CACHED_COMMIT_REF" != "$COMMIT_REF" &&
+git diff --quiet "$CACHED_COMMIT_REF" "$COMMIT_REF" -- client/ shared/ package.json package-lock.json netlify.toml
+'''
+
+[build.environment]
+  NODE_VERSION = "24"
