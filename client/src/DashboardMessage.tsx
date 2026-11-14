@@ -9,17 +9,22 @@ function MessagePreview({ message }: { message: string }) {
   useEffect(() => {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let frame = 0;
-    function animate() {
+    let deadline = 0;
+    function finish() {
       cancelAnimationFrame(frame);
+      window.clearTimeout(deadline);
       setLength(undefined);
-      if (motion.matches) return;
+    }
+    function animate() {
+      finish();
+      if (motion.matches || document.hidden) return;
       const segments = [...segmenter.segment(message)].slice(0, 72);
       const duration = Math.min(850, segments.length * 28);
       const started = performance.now();
       function type(now: number) {
         const count = Math.floor(((now - started) / duration) * segments.length);
         if (count >= segments.length) {
-          setLength(undefined);
+          finish();
           return;
         }
         setLength(segments[count].index);
@@ -27,12 +32,16 @@ function MessagePreview({ message }: { message: string }) {
       }
       setLength(0);
       frame = requestAnimationFrame(type);
+      deadline = window.setTimeout(finish, duration + 100);
     }
     animate();
     motion.addEventListener("change", animate);
+    document.addEventListener("visibilitychange", finish);
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(deadline);
       motion.removeEventListener("change", animate);
+      document.removeEventListener("visibilitychange", finish);
     };
   }, [message]);
 

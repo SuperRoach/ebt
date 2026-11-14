@@ -260,7 +260,7 @@ select, input:not([type="checkbox"]) {
 }
 .dashboard-title-button:hover .dashboard-title-chevron,
 .dashboard-title-button:focus-visible .dashboard-title-chevron { opacity: 1; }
-.header-message { display: flex; align-items: baseline; gap: 0.35rem; min-width: 0; }
+.header-message { display: flex; align-items: baseline; gap: 0.35rem; min-width: 0; flex: 1; }
 .message-preview {
   display: block;
   min-width: 0;

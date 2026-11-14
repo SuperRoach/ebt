@@ -96,7 +96,14 @@ export function useTracking() {
     });
     void refresh();
     const poll = window.setInterval(() => {
-      if (!connected || needsRetry) void refresh();
+      if (!connected || needsRetry) {
+        void refresh();
+      } else {
+        // Recover a missed message event without reloading cart history.
+        void listDevices(lifetime.signal).then(({ message, messageRevision }) => {
+          if (!lifetime.signal.aborted) receiveMessage({ message: message ?? "", revision: messageRevision ?? 0 });
+        }).catch(() => {});
+      }
     }, 15_000);
     return () => {
       lifetime.abort();
