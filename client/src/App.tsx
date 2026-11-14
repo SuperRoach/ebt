@@ -181,7 +181,7 @@ export function App() {
   return <>
     <header className="masthead">
       <div className="masthead-inner">
-        <div className="school-mark" aria-hidden="true">LP</div>
+        <div className="school-mark" aria-hidden="true">LPS</div>
         <div className="brand">
           <p>Lucas Primary School</p>
           <h1>Energy Breakthrough</h1>

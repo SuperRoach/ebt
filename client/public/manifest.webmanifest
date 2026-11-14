@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "Lucas Primary School Energy Breakthrough",
+  "short_name": "LPS EBT",
+  "description": "Live GPS tracking for Lucas Primary School's Energy Breakthrough carts.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f1f5f8",
+  "theme_color": "#003e6a",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

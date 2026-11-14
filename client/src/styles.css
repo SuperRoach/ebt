@@ -256,7 +256,7 @@ select, input:not([type="checkbox"]) {
 .speed { font-size: clamp(1.55rem, 2.4vw, 2.15rem); line-height: 1; letter-spacing: -0.06em; }
 .speed span { font-size: 0.82rem; color: var(--muted); letter-spacing: 0; }
 .battery-metric { padding-inline-start: 0.75rem; border-inline-start: 1px solid var(--border); }
-.dashboard-title { display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; min-width: 0; flex: 1; }
+.dashboard-title { display: flex; flex-direction: row; align-items: baseline; gap: 0.65rem; min-width: 0; flex: 1; }
 .about-tracking { display: grid; gap: 0.45rem; margin-top: 1.1rem; padding-top: 0.85rem; border-top: 1px solid var(--border); }
 .about-tracking h3 { font-size: 0.9rem; }
 .about-tracking p, .max-speeds { color: var(--muted); font-size: 0.78rem; line-height: 1.45; }
@@ -481,7 +481,7 @@ dialog input { width: 100%; min-height: 44px; }
   .demo-notice summary { padding-inline: 0.45rem; }
   main { padding-block: 1rem; }
   .page-heading { align-items: flex-start; flex-wrap: wrap; }
-  .dashboard-title { flex-basis: 100%; flex-direction: column; align-items: stretch; }
+  .dashboard-title { flex-basis: 100%; flex-direction: row; align-items: baseline; gap: 0.5rem; }
   .dashboard-title > h2 { max-height: 3.5rem; transition-property: max-height, transform, opacity; }
   .dashboard-title > h2[data-announcing="true"] { max-height: 0; }
   .panel-heading { padding: 0.8rem; }
