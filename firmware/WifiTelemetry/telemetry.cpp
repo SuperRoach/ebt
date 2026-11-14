@@ -19,7 +19,7 @@ namespace {
 constexpr int modemRx = 17;
 constexpr int modemTx = 18;
 constexpr unsigned long baud = 115200;
-constexpr unsigned long pollInterval = 8000;
+constexpr unsigned long pollInterval = 5000;
 HardwareSerial modem(1);
 
 bool modemReply(const char *prefix, String &data, unsigned long timeout,
@@ -514,42 +514,60 @@ bool readSequence(const String &payload, JsonDocument &batch) {
   return sequence && strlen(sequence) == 43;
 }
 
-void sendQueued(unsigned long pollStarted) {
-  File directory = SD_MMC.open(queueDir);
-  if (!directory || !directory.isDirectory()) return;
-  // Close the directory before deleting any file. FAT directory iteration
-  // is then independent of whether the upload removed an entry.
-  String paths[uploadsPerPoll];
-  int count = 0;
-  while (count < uploadsPerPoll) {
-    File file = directory.openNextFile();
-    if (!file) break;
-    if (file.isDirectory() || !String(file.name()).endsWith(".json")) continue;
-    if (file.size() > maxRecordSize) continue;
-    const String payload = file.readString();
-    JsonDocument batch;
-    if (!payload.endsWith("\n") || !readSequence(payload, batch)) {
-      Serial.println("Skipping an incomplete microSD record");
-      continue;
-    }
-    paths[count++] = file.path();
-  }
-  directory.close();
+bool sendQueuedFile(const String &path) {
+  File file = SD_MMC.open(path);
+  if (!file || file.size() > maxRecordSize) return false;
+  const String payload = file.readString();
+  file.close();
+  JsonDocument batch;
+  if (!payload.endsWith("\n") || !readSequence(payload, batch) || !sendPayload(batch)) return false;
+  if (SD_MMC.remove(path)) return true;
+  Serial.println("Could not remove acknowledged microSD record");
+  return false;
+}
 
-  for (int i = 0; i < count; ++i) {
-    File file = SD_MMC.open(paths[i]);
-    if (!file || file.size() > maxRecordSize) continue;
-    const String payload = file.readString();
-    file.close();
-    JsonDocument batch;
-    if (!payload.endsWith("\n") || !readSequence(payload, batch)) continue;
-    if (!sendPayload(batch)) break;
-    const bool pollDue = millis() - pollStarted >= pollInterval;
-    if (!SD_MMC.remove(paths[i])) {
-      Serial.println("Could not remove acknowledged microSD record");
-      break;
+void sendQueued(unsigned long pollStarted) {
+  String latestPath;
+  String latestTimestamp;
+  JsonDocument pendingBatch;
+  const bool hasPending = !pending.isEmpty() && readSequence(pending, pendingBatch);
+  if (hasPending) latestTimestamp = pendingBatch["samples"][0]["timestamp"].as<String>();
+
+  // Scan by capture time, since directory order and boot IDs do not give
+  // chronological order. Keep only enough paths for one pass of backfill.
+  String historyPaths[uploadsPerPoll - 1];
+  int count = 0;
+  if (cardReady) {
+    File directory = SD_MMC.open(queueDir);
+    while (directory && directory.isDirectory()) {
+      File file = directory.openNextFile();
+      if (!file) break;
+      if (file.isDirectory() || !String(file.name()).endsWith(".json") || file.size() > maxRecordSize) continue;
+      const String payload = file.readString();
+      JsonDocument batch;
+      if (!payload.endsWith("\n") || !readSequence(payload, batch)) continue;
+      const String timestamp = batch["samples"][0]["timestamp"].as<String>();
+      if (timestamp.length() != 20) continue;
+      String path = file.path();
+      if (timestamp > latestTimestamp) {
+        latestTimestamp = timestamp;
+        const String previousPath = latestPath;
+        latestPath = path;
+        path = previousPath;
+      }
+      if (!path.isEmpty() && count < uploadsPerPoll - 1) historyPaths[count++] = path;
     }
-    if (pollDue) break;
+    directory.close();
+  }
+
+  if (!latestPath.isEmpty() && !sendQueuedFile(latestPath)) return;
+  if (hasPending && (latestPath.isEmpty() || millis() - pollStarted < pollInterval)) {
+    if (!sendPayload(pendingBatch)) return;
+    pending = "";
+  }
+  const int historyLimit = uploadsPerPoll - (hasPending ? 1 : 0) - (latestPath.isEmpty() ? 0 : 1);
+  for (int i = 0; i < count && i < historyLimit && millis() - pollStarted < pollInterval; ++i) {
+    if (!sendQueuedFile(historyPaths[i])) break;
   }
 }
 }  // namespace
@@ -603,19 +621,13 @@ void loop() {
     else Serial.println("microSD write failed. Holding current fix in RAM.");
   }
   if (wifiOnly || lteFailures >= 3 || firmwareWifiNeeded()) serviceWifi();
-  if (wifiOnly || clockReady()) {
-    if (cardReady) sendQueued(pollStarted);
-    if (!pending.isEmpty() && millis() - pollStarted < pollInterval) {
-      JsonDocument batch;
-      if (readSequence(pending, batch) && sendPayload(batch)) pending = "";
-    }
-  }
-  // Require two missed polls before reporting GPS loss to avoid flashing
+  if (wifiOnly || clockReady()) sendQueued(pollStarted);
+  // Require three missed polls before reporting GPS loss to avoid flashing
   // the status on and off when one reading is incomplete.
   static unsigned int missedPolls = 0;
   if (capturedFix) missedPolls = 0;
-  else if (pending.isEmpty() && missedPolls < 2) ++missedPolls;
-  if (missedPolls == 2 && millis() - pollStarted < pollInterval) sendNoGpsStatus();
+  else if (pending.isEmpty() && missedPolls < 3) ++missedPolls;
+  if (missedPolls == 3 && millis() - pollStarted < pollInterval) sendNoGpsStatus();
   serviceFirmwareUpdate();
   const auto elapsed = millis() - pollStarted;
   if (elapsed < pollInterval) delay(pollInterval - elapsed);

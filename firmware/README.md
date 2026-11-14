@@ -53,7 +53,7 @@ tracker profile at a time, using a separate output directory such as
 device ID and reports captures and server acknowledgements. Check the stored fix on the dashboard
 for the API you configured.
 
-The tracker targets one GPS poll every 8 seconds. If a modem command or queue upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout.
+The tracker targets one GPS poll every 5 seconds on LTE and Wi-Fi. Uploads run one at a time. If a modem command or upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout.
 
 ## OTA rollout
 
@@ -63,7 +63,7 @@ The API now supports uploading a `.bin` from Device admin and assigning that rel
 2. For the Wi-Fi-only test, use the same tracker profile and partition option. Add `--build-property compiler.cpp.extra_flags=-DEBT_LTE_ENABLED=0` to the compile command. This builds `wifi-only-0.5.1`. Ensure that profile has working Wi-Fi credentials. The LTE flag disables cellular uploads and leaves the modem available for GNSS.
 3. In **Device admin → Firmware update**, select that tracker, enter `wifi-only-0.5.1`, and upload `WifiTelemetry.ino.bin` from that build. The tracker can receive the offer over either link and downloads the firmware over Wi-Fi from the authenticated HTTPS API. It verifies the size and SHA-256 before selecting the other slot. The new image must receive a telemetry acknowledgement within three minutes or the device rolls back. Check the startup version and `Wi-Fi acknowledged` on serial.
 
-Insert a FAT32 microSD card before powering on the tracker. The firmware saves each fix in `/ebt-queue` and deletes the file after the server acknowledges its sequence. The tracker scans that directory again after a reboot and retries queued fixes with their original sequences. Without a usable card the tracker can retry one sample in RAM.
+Insert a FAT32 microSD card before powering on the tracker. The firmware saves each fix in `/ebt-queue` and deletes the file after the server acknowledges its sequence. It sends the newest fix by capture time first, including after a reboot, then sends older fixes while there is time before the next poll. Queued fixes keep their original sequences. Without a usable card the tracker can retry one sample in RAM.
 
 The local header and firmware build outputs are ignored; both can contain credentials. Keep them private and save any microSD queue copies or serial GPS exports under an ignored directory such as `recordings/`.
 
@@ -77,4 +77,4 @@ With the board powered off, insert an activated data SIM and connect the LTE ant
 
 With an HTTPS URL, the tracker starts with Wi-Fi off. After three failed LTE upload attempts it enables Wi-Fi and automatically reconnects when the network returns. It retries LTE about once a minute, then turns Wi-Fi off after an LTE upload is acknowledged. If Wi-Fi cannot connect for 30 seconds, it pauses Wi-Fi attempts for a minute. The microSD queue retains unacknowledged fixes with their original sequence IDs.
 
-After two missed GPS polls, the tracker can send a status update about every 24 seconds while GPS is unavailable. The dashboard shows the connection and keeps the last known position. Status updates are sent live and skipped when offline. GPS, cellular network time, or Wi-Fi time sync can set the clock for HTTPS and status timestamps. Watch the serial monitor for `LTE acknowledged` or `Wi-Fi acknowledged` to confirm delivery.
+After three missed GPS polls, the tracker can send a status update about every 24 seconds while GPS is unavailable. The dashboard shows the connection and keeps the last known position. Status updates are sent live and skipped when offline. GPS, cellular network time, or Wi-Fi time sync can set the clock for HTTPS and status timestamps. Watch the serial monitor for `LTE acknowledged` or `Wi-Fi acknowledged` to confirm delivery.
