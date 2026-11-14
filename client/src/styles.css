@@ -250,12 +250,15 @@ select, input:not([type="checkbox"]) {
 }
 .dashboard-title-button:hover { color: var(--school-navy); background: transparent; }
 .dashboard-title-chevron {
+  opacity: 0;
   flex: 0 0 0.28em;
   height: 0.28em;
   border-right: 2px solid var(--school-navy);
   border-bottom: 2px solid var(--school-navy);
   transform: translateY(-25%) rotate(45deg);
 }
+.dashboard-title-button:hover .dashboard-title-chevron,
+.dashboard-title-button:focus-visible .dashboard-title-chevron { opacity: 1; }
 .header-message { display: flex; align-items: center; gap: 0.35rem; max-width: 38rem; }
 .message-preview {
   display: flex;
