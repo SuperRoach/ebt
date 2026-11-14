@@ -1,4 +1,4 @@
-app = "ebt-gps-api-5c36c3"
+app = "ebt"
 primary_region = "syd"
 kill_signal = "SIGTERM"
 
@@ -10,6 +10,7 @@ kill_signal = "SIGTERM"
   PORT = "8080"
   DATABASE_URL = "file:/data/ebt.db"
   FIRMWARE_STORAGE_DIR = "/data/firmware"
+  EBT_DASHBOARD_ORIGIN = "https://lps-ebt-tracking.netlify.app"
 
 [[mounts]]
   source = "ebt_data"
