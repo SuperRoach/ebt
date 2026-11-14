@@ -13,12 +13,15 @@ export function useTracking() {
   const [lastUploads, setLastUploads] = useState<Record<string, string>>({});
   const [connection, setConnection] = useState<Connection>("connecting");
   const [streamed, setStreamed] = useState<Record<string, StoredSample>>({});
+  const [gpsUpdatesRead, setGpsUpdatesRead] = useState(0);
+  const [serverUpdatesRead, setServerUpdatesRead] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState(false);
   const [now, setNow] = useState(Date.now);
   const [refreshKey, setRefreshKey] = useState(0);
   const editedDevices = useRef(new Map<string, Device>());
+  const seenGpsUpdates = useRef(new Set<string>());
   const openedAt = useRef(now);
 
   function receiveMessage(next: DashboardMessage) {
@@ -49,6 +52,13 @@ export function useTracking() {
 
     function merge(id: string, incoming: StoredSample[], lastUploadAt?: string | null) {
       if (lifetime.signal.aborted) return;
+      const unseen = incoming.filter((sample) => {
+        const key = `${id}:${sample.sequence}`;
+        if (seenGpsUpdates.current.has(key)) return false;
+        seenGpsUpdates.current.add(key);
+        return true;
+      });
+      if (unseen.length) setGpsUpdatesRead((count) => count + unseen.length);
       const latest = incoming.reduce((latest, sample) =>
         sample.receivedAt > latest ? sample.receivedAt : latest, lastUploadAt ?? "");
       if (latest) {
@@ -108,6 +118,7 @@ export function useTracking() {
         if (connected) void refresh();
       },
       onTelemetry(event) {
+        setServerUpdatesRead((count) => count + 1);
         const incoming = fromEvent(event);
         const receivedNow = Date.now();
         merge(event.deviceId, incoming);
@@ -154,6 +165,7 @@ export function useTracking() {
 
   return {
     devices, message: notice.message, samples, lastUploads, connection, streamed, loading, error, retrying, now,
+    gpsUpdatesRead, serverUpdatesRead,
     saveDevice, saveMessage, retry: () => setRefreshKey((key) => key + 1),
   };
 }
