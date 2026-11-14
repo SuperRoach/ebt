@@ -104,6 +104,7 @@ export function App() {
       demo: Boolean(sample && isDemo(sample)),
       positionDemo: Boolean(fix && isDemo(fix)),
       point: fix ? position(fix) : null,
+      headingDeg: fix?.headingDeg ?? null,
       trail: trailSegments(fix ? recent.slice(recent.indexOf(fix)) : recent, historical && fix ? Date.parse(fix.timestamp) : now),
     };
   });

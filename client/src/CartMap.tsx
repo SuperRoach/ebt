@@ -15,6 +15,7 @@ export interface MapCart {
   historical: boolean;
   positionDemo: boolean;
   point: ReturnType<typeof position>;
+  headingDeg: number | null;
   trail: ReturnType<typeof trailSegments>;
 }
 
@@ -112,6 +113,14 @@ export function CartMap({ carts, followId, fitRequest }: {
       if (layer.glyph) {
         layer.glyph.textContent = String(number);
         layer.glyph.style.background = colour;
+        layer.glyph.style.setProperty("--heading-colour", colour);
+        if (cart.headingDeg == null) {
+          layer.glyph.style.removeProperty("--cart-heading");
+          delete layer.glyph.dataset.hasHeading;
+        } else {
+          layer.glyph.style.setProperty("--cart-heading", `${cart.headingDeg}deg`);
+          layer.glyph.dataset.hasHeading = "true";
+        }
       }
       const label = document.createElement("span");
       label.textContent = device.displayName + (positionDemo ? " · Demo" : "") + (historical ? " · Last known" : "");
