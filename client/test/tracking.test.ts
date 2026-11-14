@@ -23,6 +23,11 @@ function sample(sequence: string, age: number, overrides: Partial<StoredSample> 
     fixValid: true,
     satelliteCount: 11,
     hdop: null,
+    cellularRssiDbm: null,
+    cellularRsrpDbm: null,
+    cellularRsrqDb: null,
+    cellularSinrDb: null,
+
     ...overrides,
   };
 }

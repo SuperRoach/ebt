@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import { telemetrySchema, type TelemetryBatch } from "@ebt/shared";
 import Fastify from "fastify";
@@ -33,6 +34,14 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     bodyLimit: 8 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false, useDefaults: false } },
   });
+  const dashboardOrigin = process.env.EBT_DASHBOARD_ORIGIN;
+  if (dashboardOrigin) {
+    await app.register(cors, {
+      origin: dashboardOrigin,
+      methods: ["GET", "HEAD", "POST", "PATCH"],
+      allowedHeaders: ["Authorization", "Content-Type", "X-Firmware-Version"],
+    });
+  }
   app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
   });
