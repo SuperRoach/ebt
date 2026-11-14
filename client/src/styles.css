@@ -235,7 +235,8 @@ select, input:not([type="checkbox"]) {
 .speed { font-size: clamp(1.55rem, 2.4vw, 2.15rem); line-height: 1; letter-spacing: -0.06em; }
 .speed span { font-size: 0.82rem; color: var(--muted); letter-spacing: 0; }
 .battery-metric { padding-inline-start: 0.75rem; border-inline-start: 1px solid var(--border); }
-.dashboard-title { display: grid; gap: 0.4rem; min-width: 0; flex: 1; }
+.dashboard-title { display: flex; align-items: baseline; gap: 0.4rem 0.85rem; min-width: 0; flex: 1; }
+.dashboard-title > h2 { flex-shrink: 0; }
 .dashboard-title-button {
   display: inline-flex;
   align-items: center;
@@ -259,27 +260,19 @@ select, input:not([type="checkbox"]) {
 }
 .dashboard-title-button:hover .dashboard-title-chevron,
 .dashboard-title-button:focus-visible .dashboard-title-chevron { opacity: 1; }
-.header-message { display: flex; align-items: center; gap: 0.35rem; max-width: 38rem; }
+.header-message { display: flex; align-items: baseline; gap: 0.35rem; min-width: 0; }
 .message-preview {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
+  display: block;
   min-width: 0;
   min-height: 44px;
-  padding: 0.25rem 0.65rem;
-  border-color: #c8e5ef;
-  background: #edf8fc;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--school-navy);
   text-align: start;
 }
-.message-preview-dot {
-  flex: 0 0 0.42rem;
-  height: 0.42rem;
-  border-radius: 50%;
-  background: #197b9d;
-  animation: message-pulse 850ms ease-out;
-}
-.message-preview-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.message-preview:hover { background: transparent; text-decoration: underline; }
+.message-preview-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: message-pulse 850ms ease-out; }
 .message-preview-text[data-typing="true"]::after {
   content: "";
   display: inline-block;
@@ -288,10 +281,11 @@ select, input:not([type="checkbox"]) {
   border-inline-end: 2px solid currentColor;
   vertical-align: -0.07em;
 }
-.message-edit { opacity: 0; }
+.message-edit { opacity: 0; flex-shrink: 0; }
 .header-message:hover .message-edit, .header-message:focus-within .message-edit { opacity: 1; }
 @media (hover: none) { .message-edit { display: none; } }
 .message-dialog[open] { animation: message-open 200ms ease-out; }
+.message-dialog .dialog-heading { justify-content: flex-end; }
 .message-full { white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-dialog textarea {
   width: 100%;
@@ -304,15 +298,15 @@ select, input:not([type="checkbox"]) {
 }
 .admin-message-action { margin-top: 0.85rem; }
 @keyframes message-pulse {
-  0% { box-shadow: 0 0 0 0 #197b9d88; }
-  80%, 100% { box-shadow: 0 0 0 0.55rem #197b9d00; }
+  0%, 100% { text-shadow: 0 0 0 transparent; }
+  40% { text-shadow: 0 0 0.45rem #197b9d77; }
 }
 @keyframes message-open {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .message-dialog[open], .message-preview-dot { animation: none; }
+  .message-dialog[open], .message-preview-text { animation: none; }
 }
 .cart-readings { align-items: center; }
 .battery-icon { position: relative; width: 1.05rem; height: 0.6rem; flex-shrink: 0; border: 1.5px solid currentColor; border-radius: 2px; color: var(--muted); }
@@ -435,7 +429,7 @@ dialog input { width: 100%; min-height: 44px; }
   .demo-notice summary { padding-inline: 0.45rem; }
   main { padding-block: 1rem; }
   .page-heading { align-items: flex-start; flex-wrap: wrap; }
-  .dashboard-title { flex-basis: 100%; }
+  .dashboard-title { flex-basis: 100%; flex-direction: column; align-items: stretch; }
   .panel-heading { padding: 0.8rem; }
   .map-frame { margin-inline: 0.45rem; }
   .map-caption { padding-inline: 0.65rem; }

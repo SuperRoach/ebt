@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AdminTokenField } from "./AdminTokenField.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -37,7 +37,6 @@ function MessagePreview({ message }: { message: string }) {
   }, [message]);
 
   return <>
-    <span className="message-preview-dot" aria-hidden="true" />
     <span className="message-preview-text" aria-hidden="true" data-typing={length !== undefined}>
       {length === undefined ? message : message.slice(0, length)}
     </span>
@@ -52,7 +51,6 @@ export function DashboardMessage({ message, adminToken, saveMessage }: {
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const titleId = useId();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [token, setToken] = useState("");
@@ -99,11 +97,10 @@ export function DashboardMessage({ message, adminToken, saveMessage }: {
       </button>
       {adminToken && <button type="button" className="message-edit" onClick={openEditor}>Edit</button>}
     </div>}
-    <dialog className="message-dialog" ref={dialog} aria-labelledby={titleId}
+    <dialog className="message-dialog" ref={dialog} aria-label={editing ? "Edit dashboard message" : "Dashboard message"}
       onCancel={(event) => { if (saving) event.preventDefault(); }}
       onClose={() => { setEditing(false); setToken(""); setDraft(""); setError(""); }}>
       <div className="dialog-heading">
-        <h2 id={titleId}>{editing ? "Edit dashboard message" : "Dashboard message"}</h2>
         <button type="button" disabled={saving} onClick={() => dialog.current?.close()}>Close</button>
       </div>
       {editing ? <form onSubmit={(event) => void submit(event)}>
