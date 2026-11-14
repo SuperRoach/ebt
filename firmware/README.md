@@ -46,7 +46,8 @@ fill them in before compiling.
 For Wi-Fi-only bench testing, set `EBT_API_URL` to the Mac's LAN HTTP address ending in `:3001/api/v1/telemetry`. Set `TELEMETRY_HOST` to the Mac's Wi-Fi IPv4 address in `server/.env` and run `npm start` from the root. Use a trusted 2.4 GHz network that lets the tracker reach the Mac.
 
 Install `ArduinoJson@7.4.2` with Arduino CLI. Compile and upload as above using the
-`firmware/WifiTelemetry` sketch and add `,PartitionScheme=huge_app` to the board options. Build one
+`firmware/WifiTelemetry` sketch and add `,PartitionScheme=app3M_fat9M_16MB` to the board options. This
+layout has two 3 MiB application slots and an OTA data partition. Build one
 tracker profile at a time, using a separate output directory such as
 `/tmp/ebt-build-tracker-01` or `/tmp/ebt-build-tracker-02`. The serial monitor prints the selected
 device ID and reports captures and server acknowledgements. Check the stored fix on the dashboard
@@ -54,11 +55,13 @@ for the API you configured.
 
 The tracker targets one GPS poll every 8 seconds. If a modem command or queue upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout.
 
-## OTA rollout groundwork
+## OTA rollout
 
 The API now supports uploading a `.bin` from Device admin and assigning that release to exactly one selected tracker. It stores artifacts under `FIRMWARE_STORAGE_DIR` (the Fly deployment uses `/data/firmware` on the persistent volume), returns an update offer only to that tracker's authenticated telemetry requests, and requires the same device key to download the artifact. Upload a distinct version for each tracker profile because each image currently contains that tracker's device ID and API key.
 
-The current tracker firmware does not yet consume the update offer or install the binary. Do not rely on the upload action to update a board yet. The next firmware step is adding an OTA-capable partition layout and a verified download/install path; the first USB flash will need to install that layout and OTA-enabled firmware before remote updates can run. Keep using the documented USB compile/upload procedure until that firmware step is complete.
+1. USB-flash the full `dual-link-0.5.0` build using the partition option above. This installs the partition table and bootloader. LTE is enabled by default. Check the startup banner and wait for an `LTE acknowledged` line before trying an OTA release.
+2. For the Wi-Fi-only test, use the same tracker profile and partition option. Add `--build-property compiler.cpp.extra_flags=-DEBT_LTE_ENABLED=0` to the compile command. This builds `wifi-only-0.5.1`. Ensure that profile has working Wi-Fi credentials. The LTE flag disables cellular uploads and leaves the modem available for GNSS.
+3. In **Device admin → Firmware update**, select that tracker, enter `wifi-only-0.5.1`, and upload `WifiTelemetry.ino.bin` from that build. The tracker can receive the offer over either link and downloads the firmware over Wi-Fi from the authenticated HTTPS API. It verifies the size and SHA-256 before selecting the other slot. The new image must receive a telemetry acknowledgement within three minutes or the device rolls back. Check the startup version and `Wi-Fi acknowledged` on serial.
 
 Insert a FAT32 microSD card before powering on the tracker. The firmware saves each fix in `/ebt-queue` and deletes the file after the server acknowledges its sequence. The tracker scans that directory again after a reboot and retries queued fixes with their original sequences. Without a usable card the tracker can retry one sample in RAM.
 

@@ -11,6 +11,8 @@
 #include <unistd.h>
 
 #include "../include/secrets.h"
+#include "build_config.h"
+#include "ota.h"
 #include "telemetry_ca.h"
 
 namespace {
@@ -154,7 +156,7 @@ JsonObject beginSample(JsonDocument &batch, const char *timestamp, double batter
   snprintf(sequence, sizeof(sequence), "%s:%010lu", bootId, (unsigned long)++counter);
   batch["version"] = 1;
   batch["deviceId"] = deviceId;
-  batch["firmwareVersion"] = "dual-link-0.4.0";
+  batch["firmwareVersion"] = EBT_FIRMWARE_VERSION;
   batch["recordingSessionId"] = sessionId;
   batch["recordingState"] = "recording";
   batch["transport"] = "wifi";
@@ -263,7 +265,7 @@ bool queueOnCard(const String &payload) {
   return true;
 }
 
-bool acknowledged(int status, const String &body, const char *sequence, const char *link) {
+bool acknowledged(int status, const String &body, const char *sequence, const char *link, bool currentVersion) {
   if (status == 200) {
     JsonDocument ack;
     if (!deserializeJson(ack, body) && ack["version"] == 1 &&
@@ -271,6 +273,7 @@ bool acknowledged(int status, const String &body, const char *sequence, const ch
         (ack["accepted"][0]["status"] == "stored" || ack["accepted"][0]["status"] == "duplicate")) {
       Serial.printf("%s acknowledged %s as %s\n", link, sequence,
                     ack["accepted"][0]["status"].as<const char *>());
+      if (currentVersion) acceptFirmwareOffer(ack["firmwareUpdate"]);
       return true;
     }
   }
@@ -278,7 +281,7 @@ bool acknowledged(int status, const String &body, const char *sequence, const ch
   return false;
 }
 
-bool sendWifi(const String &payload, const char *sequence) {
+bool sendWifi(const String &payload, const char *sequence, bool currentVersion) {
   NetworkClient plain;
   NetworkClientSecure secure;
   const bool https = String(EBT_API_URL).startsWith("https://");
@@ -292,7 +295,7 @@ bool sendWifi(const String &payload, const char *sequence) {
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", String("Bearer ") + EBT_DEVICE_KEY);
   const int status = http.POST(payload);
-  return acknowledged(status, status == 200 ? http.getString() : String(), sequence, "Wi-Fi");
+  return acknowledged(status, status == 200 ? http.getString() : String(), sequence, "Wi-Fi", currentVersion);
 }
 
 bool modemUpload(const String &request, const char *prompt, const char *bytes, size_t size) {
@@ -371,7 +374,7 @@ bool startModemHttp() {
   return modemHttpReady;
 }
 
-bool sendCellular(const String &payload, const char *sequence) {
+bool sendCellular(const String &payload, const char *sequence, bool currentVersion) {
   if (!startModemHttp() ||
       !modemUpload(String("AT+HTTPDATA=") + payload.length() + ",3000",
                    "DOWNLOAD", payload.c_str(), payload.length())) return false;
@@ -380,8 +383,8 @@ bool sendCellular(const String &payload, const char *sequence) {
       (response.isEmpty() && !modemReply("+HTTPACTION:", response, 8000, nullptr))) return false;
   int method, status, length;
   if (sscanf(response.c_str(), "%d,%d,%d", &method, &status, &length) != 3 || method != 1) return false;
-  if (status != 200 || length <= 0 || length > 512) return acknowledged(status, "", sequence, "LTE");
-  if (!command("AT+HTTPREAD=0,512", nullptr, response, 1500) ||
+  if (status != 200 || length <= 0 || length > 1024) return acknowledged(status, "", sequence, "LTE", currentVersion);
+  if (!command("AT+HTTPREAD=0,1024", nullptr, response, 1500) ||
       !modemReply("+HTTPREAD:", response, 1500, nullptr) || response.toInt() != length) return false;
   String body;
   body.reserve(length);
@@ -391,7 +394,7 @@ bool sendCellular(const String &payload, const char *sequence) {
     if (byte < 0) delay(1);
     else body += static_cast<char>(byte);
   }
-  return body.length() == static_cast<size_t>(length) && acknowledged(status, body, sequence, "LTE");
+  return body.length() == static_cast<size_t>(length) && acknowledged(status, body, sequence, "LTE", currentVersion);
 }
 
 constexpr unsigned long lteRetryInterval = 60000;
@@ -436,14 +439,27 @@ void serviceWifi() {
 
 bool sendPayload(JsonDocument &batch) {
   const char *sequence = batch["samples"][0]["sequence"];
+  const bool currentVersion = batch["firmwareVersion"] == EBT_FIRMWARE_VERSION;
   String payload;
   if (!wifiOnly && (lteFailures < 3 || millis() - lastLteFailure >= lteRetryInterval)) {
     batch["transport"] = "4g";
+    // Measure the upload link, including when replaying queued positions.
+    static unsigned long lastSignalQuery = 0;
+    static int signal = 99;
+    if (lastSignalQuery == 0 || millis() - lastSignalQuery >= 15000) {
+      lastSignalQuery = millis();
+      String response;
+      int rssi, ber;
+      signal = command("AT+CSQ", "+CSQ:", response, 1000) &&
+               sscanf(response.c_str(), "%d,%d", &rssi, &ber) == 2 && rssi >= 0 && rssi <= 31
+                 ? rssi : 99;
+    }
+    if (signal != 99) batch["cellularSignal"]["rssiDbm"] = -113 + 2 * signal;
     serializeJson(batch, payload);
-    if (sendCellular(payload, sequence)) {
+    if (sendCellular(payload, sequence, currentVersion)) {
       lteFailures = 0;
       wifiTried = false;
-      stopWifi();
+      if (!firmwareWifiNeeded()) stopWifi();
       return true;
     }
     modemHttpReady = false;
@@ -455,9 +471,10 @@ bool sendPayload(JsonDocument &batch) {
   serviceWifi();
   if (!wifiOn || WiFi.status() != WL_CONNECTED) return false;
   batch["transport"] = "wifi";
+  batch.remove("cellularSignal");
   payload = "";
   serializeJson(batch, payload);
-  return sendWifi(payload, sequence);
+  return sendWifi(payload, sequence, currentVersion);
 }
 
 // Status reports are useful only while fresh, so never queue them on microSD.
@@ -539,6 +556,7 @@ void sendQueued(unsigned long pollStarted) {
 
 void setup() {
   Serial.begin(baud);
+  beginFirmwareTrial();
   Wire.begin(15, 16);
   modem.begin(baud, SERIAL_8N1, modemRx, modemTx);
   SD_MMC.setPins(5, 4, 6);
@@ -546,18 +564,22 @@ void setup() {
               (SD_MMC.exists(queueDir) || SD_MMC.mkdir(queueDir));
   WiFi.persistent(false);
   WiFi.mode(WIFI_OFF);
-  wifiOnly = !String(EBT_API_URL).startsWith("https://");
+  wifiOnly = !EBT_LTE_ENABLED || !String(EBT_API_URL).startsWith("https://");
   if (wifiOnly) serviceWifi();
 
   randomId(bootId);
   randomId(sessionId);
   delay(1500);
-  Serial.printf("EBT LTE/Wi-Fi telemetry · %s\n", deviceId);
+  Serial.printf("EBT %s · %s · %s\n", EBT_FIRMWARE_VERSION, deviceId, wifiOnly ? "Wi-Fi only" : "LTE first");
   Serial.println(cardReady ? "microSD queue ready" : "microSD unavailable. Using one RAM retry slot.");
   String response;
-  while (!command("AT", nullptr, response, 1500)) delay(1000);
+  while (!command("AT", nullptr, response, 1500)) {
+    checkFirmwareTrial();
+    delay(1000);
+  }
   while (!command("AT+CGNSSPWR=1", nullptr, response, 10000)) {
     if (command("AT+CGNSSPWR?", "+CGNSSPWR:", response, 2000) && response == "1") break;
+    checkFirmwareTrial();
     delay(2000);
   }
   Serial.println("GNSS enabled");
@@ -565,6 +587,7 @@ void setup() {
 }
 
 void loop() {
+  checkFirmwareTrial();
   const auto pollStarted = millis();
   bool capturedFix = false;
   if (pending.isEmpty()) {
@@ -579,7 +602,7 @@ void loop() {
     if (queueOnCard(pending)) pending = "";
     else Serial.println("microSD write failed. Holding current fix in RAM.");
   }
-  if (wifiOnly || lteFailures >= 3) serviceWifi();
+  if (wifiOnly || lteFailures >= 3 || firmwareWifiNeeded()) serviceWifi();
   if (wifiOnly || clockReady()) {
     if (cardReady) sendQueued(pollStarted);
     if (!pending.isEmpty() && millis() - pollStarted < pollInterval) {
@@ -593,6 +616,7 @@ void loop() {
   if (capturedFix) missedPolls = 0;
   else if (pending.isEmpty() && missedPolls < 2) ++missedPolls;
   if (missedPolls == 2 && millis() - pollStarted < pollInterval) sendNoGpsStatus();
+  serviceFirmwareUpdate();
   const auto elapsed = millis() - pollStarted;
   if (elapsed < pollInterval) delay(pollInterval - elapsed);
 }

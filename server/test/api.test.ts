@@ -32,6 +32,44 @@ function sample(counter: number, timestamp = "2026-11-13T06:00:00.000Z"): GpsSam
   };
 }
 
+test("firmware upload CORS allows the configured dashboard origin", async (t) => {
+  const dashboardOrigin = "https://dashboard.example";
+  const previous = process.env.EBT_DASHBOARD_ORIGIN;
+  process.env.EBT_DASHBOARD_ORIGIN = dashboardOrigin;
+  t.after(() => {
+    if (previous === undefined) delete process.env.EBT_DASHBOARD_ORIGIN;
+    else process.env.EBT_DASHBOARD_ORIGIN = previous;
+  });
+  const db = createDatabase("file::memory:");
+  const app = await buildApp(db, false, "test-admin");
+  t.after(async () => {
+    await app.close();
+    await db.$disconnect();
+  });
+  const url = "/api/v1/admin/devices/lps-ebt-01/firmware";
+  const options = await app.inject({
+    method: "OPTIONS", url, headers: {
+      origin: dashboardOrigin,
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "authorization,content-type,x-firmware-version",
+    },
+  });
+  assert.equal(options.statusCode, 204);
+  assert.equal(options.headers["access-control-allow-origin"], dashboardOrigin);
+  assert.match(String(options.headers["access-control-allow-methods"]), /\bPOST\b/);
+  assert.match(String(options.headers["access-control-allow-headers"]), /\bX-Firmware-Version\b/i);
+
+  const denied = await app.inject({ method: "OPTIONS", url, headers: { origin: "https://other.example" } });
+  assert.equal(denied.headers["access-control-allow-origin"], undefined);
+
+  const upload = await app.inject({
+    method: "POST", url, payload: Buffer.alloc(1024),
+    headers: { origin: dashboardOrigin, "content-type": "application/octet-stream", "x-firmware-version": "test-1" },
+  });
+  assert.equal(upload.statusCode, 401);
+  assert.equal(upload.headers["access-control-allow-origin"], dashboardOrigin);
+});
+
 test("SQLite telemetry API", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "ebt-test-"));
   const url = `file:${join(dir, "test.db")}`;

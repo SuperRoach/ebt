@@ -40,19 +40,24 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
   app.addSchema(telemetrySchema);
 
   const dashboardOrigin = process.env.EBT_DASHBOARD_ORIGIN;
+  const firmwareUploadPath = "/api/v1/admin/devices/:id/firmware";
   if (dashboardOrigin) {
     app.addHook("onRequest", async (request, reply) => {
-      if (!/^\/api\/v1\/(devices(?:\/|$)|dashboard-message$)/.test(request.url.split("?")[0])) return;
+      const firmwareUpload = request.routeOptions.url === firmwareUploadPath;
+      if (!firmwareUpload && !/^\/api\/v1\/(devices(?:\/|$)|dashboard-message$)/.test(request.url.split("?")[0])) return;
       reply.header("Vary", "Origin");
       if (request.headers.origin !== dashboardOrigin) return;
       reply.header("Access-Control-Allow-Origin", dashboardOrigin);
       if (request.method === "OPTIONS") {
-        reply.header("Access-Control-Allow-Methods", "GET, PATCH, PUT, OPTIONS");
-        reply.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+        reply.header("Access-Control-Allow-Methods", firmwareUpload ? "POST, OPTIONS" : "GET, PATCH, PUT, OPTIONS");
+        reply.header("Access-Control-Allow-Headers", firmwareUpload
+          ? "Authorization, Content-Type, X-Firmware-Version"
+          : "Authorization, Content-Type");
       }
     });
     app.options("/api/v1/devices/:id", async (_request, reply) => reply.code(204).send());
     app.options("/api/v1/dashboard-message", async (_request, reply) => reply.code(204).send());
+    app.options(firmwareUploadPath, async (_request, reply) => reply.code(204).send());
   }
 
   function validAdmin(authorization: string | undefined) {
@@ -150,7 +155,7 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     return result.ack;
   });
 
-  app.post<{ Params: { id: string }; Body: Buffer }>("/api/v1/admin/devices/:id/firmware", {
+  app.post<{ Params: { id: string }; Body: Buffer }>(firmwareUploadPath, {
     schema: { params },
   }, async (request, reply) => {
     if (!adminToken) return reply.code(503).send({ error: "Firmware updates are disabled on the server" });
