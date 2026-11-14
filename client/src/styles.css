@@ -236,6 +236,26 @@ select, input:not([type="checkbox"]) {
 .speed span { font-size: 0.82rem; color: var(--muted); letter-spacing: 0; }
 .battery-metric { padding-inline-start: 0.75rem; border-inline-start: 1px solid var(--border); }
 .dashboard-title { display: grid; gap: 0.4rem; min-width: 0; flex: 1; }
+.dashboard-title-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+}
+.dashboard-title-button:hover { color: var(--school-navy); background: transparent; }
+.dashboard-title-chevron {
+  flex: 0 0 0.28em;
+  height: 0.28em;
+  border-right: 2px solid var(--school-navy);
+  border-bottom: 2px solid var(--school-navy);
+  transform: translateY(-25%) rotate(45deg);
+}
 .header-message { display: flex; align-items: center; gap: 0.35rem; max-width: 38rem; }
 .message-preview {
   display: flex;
@@ -347,12 +367,30 @@ dialog::backdrop { background: #0b2237b5; }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.8rem; }
 dialog form, dialog label { display: grid; gap: 0.5rem; }
 dialog form { gap: 0.9rem; }
-dialog hr { width: 100%; margin-block: 1.1rem; border: 0; border-top: 1px solid var(--border); }
-dialog h3 { font-size: 1rem; }
-.admin-help { margin-block: 0.45rem 0.8rem; color: var(--muted); font-size: 0.88rem; line-height: 1.4; }
+.firmware-update { margin-top: 1rem; border-top: 1px solid var(--border); }
+.firmware-update summary { padding-block: 0.75rem; color: var(--school-navy); font-weight: 700; cursor: pointer; }
+.admin-help { color: var(--muted); font-size: 0.88rem; line-height: 1.4; }
+.admin-feedback { margin-top: 0.75rem; }
 dialog label { font-weight: 700; }
 dialog input { width: 100%; min-height: 44px; }
 .admin-token-field { display: grid; gap: 0.5rem; }
+.admin-token-label { position: relative; justify-self: start; }
+.admin-token-help {
+  position: absolute;
+  z-index: 1;
+  inset: auto auto calc(100% + 0.25rem) 0;
+  width: max-content;
+  max-width: min(15rem, 70vw);
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: var(--ink);
+  color: white;
+  font-size: 0.8rem;
+  opacity: 0;
+  pointer-events: none;
+}
+.admin-token-label:hover .admin-token-help,
+.admin-token-field:has(input:focus-visible) .admin-token-help { opacity: 1; }
 .admin-token-control { position: relative; }
 .admin-token-control input { padding-inline-end: 3rem; }
 .admin-token-toggle { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; width: 44px; padding: 0; border: 0; background: transparent; color: var(--muted); }

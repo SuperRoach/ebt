@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { AdminTokenField } from "./AdminTokenField.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -44,11 +45,10 @@ function MessagePreview({ message }: { message: string }) {
   </>;
 }
 
-export function DashboardMessage({ message, adminToken, saveMessage, editorRequest }: {
+export function DashboardMessage({ message, adminToken, saveMessage }: {
   message: string;
   adminToken: string;
   saveMessage: (message: string, token: string) => Promise<void>;
-  editorRequest: number;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -67,16 +67,9 @@ export function DashboardMessage({ message, adminToken, saveMessage, editorReque
     dialog.current?.showModal();
   }
 
-  const handledRequest = useRef(0);
-  useEffect(() => {
-    if (editorRequest === handledRequest.current) return;
-    handledRequest.current = editorRequest;
-    openEditor();
-  }, [editorRequest, message, adminToken]);
-
   useEffect(() => {
     if (editing && dialog.current?.open) textarea.current?.focus();
-  }, [editing, editorRequest]);
+  }, [editing]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -93,6 +86,10 @@ export function DashboardMessage({ message, adminToken, saveMessage, editorReque
   }
 
   return <>
+    <h2><button className="dashboard-title-button" type="button" aria-haspopup="dialog"
+      aria-label="Cart tracking, set dashboard message" onClick={openEditor}>
+      Cart tracking <span className="dashboard-title-chevron" aria-hidden="true" />
+    </button></h2>
     {message && <div className="header-message">
       <button className="message-preview" type="button" aria-haspopup="dialog" onClick={() => {
         setEditing(false);
@@ -104,7 +101,7 @@ export function DashboardMessage({ message, adminToken, saveMessage, editorReque
     </div>}
     <dialog className="message-dialog" ref={dialog} aria-labelledby={titleId}
       onCancel={(event) => { if (saving) event.preventDefault(); }}
-      onClose={() => { setToken(""); setDraft(""); setError(""); }}>
+      onClose={() => { setEditing(false); setToken(""); setDraft(""); setError(""); }}>
       <div className="dialog-heading">
         <h2 id={titleId}>{editing ? "Edit dashboard message" : "Dashboard message"}</h2>
         <button type="button" disabled={saving} onClick={() => dialog.current?.close()}>Close</button>
@@ -114,10 +111,7 @@ export function DashboardMessage({ message, adminToken, saveMessage, editorReque
           <textarea ref={textarea} value={draft} maxLength={500} rows={4} disabled={saving}
             onChange={(event) => setDraft(event.target.value)} placeholder="Leave blank to clear" />
         </label>
-        <label>Admin token
-          <input type="password" value={token} required disabled={saving} autoComplete="off"
-            onChange={(event) => setToken(event.target.value)} />
-        </label>
+        <AdminTokenField token={token} setToken={setToken} disabled={saving} />
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="primary-button" type="submit" disabled={saving || !token.trim()}>
           {saving ? "Saving…" : draft.trim() ? "Publish message" : "Clear message"}
