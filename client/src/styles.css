@@ -285,6 +285,13 @@ dialog form, dialog label { display: grid; gap: 0.5rem; }
 dialog form { gap: 0.9rem; }
 dialog label { font-weight: 700; }
 dialog input { width: 100%; min-height: 44px; }
+.admin-token-field { display: grid; gap: 0.5rem; }
+.admin-token-control { position: relative; }
+.admin-token-control input { padding-inline-end: 3rem; }
+.admin-token-toggle { position: absolute; inset: 0 0 0 auto; display: grid; place-items: center; width: 44px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+.admin-token-eye { position: relative; width: 17px; height: 12px; border: 1.5px solid currentColor; border-radius: 70% 70%; }
+.admin-token-eye::before { content: ""; position: absolute; inset: 0; margin: auto; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.admin-token-eye[data-visible="true"]::after { content: ""; position: absolute; top: 4px; left: -3px; width: 21px; height: 1.5px; background: currentColor; transform: rotate(-45deg); }
 .device-colour { display: flex; align-items: end; flex-wrap: wrap; gap: 0.75rem; }
 .device-colour input[type="color"] { padding: 0.25rem; cursor: pointer; }
 .primary-button { background: var(--school-navy); color: white; }

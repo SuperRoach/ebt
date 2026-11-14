@@ -11,6 +11,7 @@ export function Admin({ devices, defaultColours, saveDevice }: {
   const [name, setName] = useState("");
   const [colour, setColour] = useState<string | null>(null);
   const [token, setToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -48,7 +49,7 @@ export function Admin({ devices, defaultColours, saveDevice }: {
     }}>Device admin</button>
     <dialog ref={dialog} aria-labelledby="admin-title" onCancel={(event) => {
       if (saving) event.preventDefault();
-    }} onClose={() => setToken("")}>
+    }} onClose={() => { setToken(""); setShowToken(false); }}>
       <div className="dialog-heading">
         <h2 id="admin-title">Device admin</h2>
         <button type="button" disabled={saving} onClick={() => dialog.current?.close()}>Close</button>
@@ -71,9 +72,20 @@ export function Admin({ devices, defaultColours, saveDevice }: {
             Use default colour
           </button>
         </div>
-        <label>Admin token
-          <input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" required disabled={saving} />
-        </label>
+        <div className="admin-token-field">
+          <label htmlFor="admin-token">Admin token</label>
+          <div className="admin-token-control">
+            <input id="admin-token" type={showToken ? "text" : "password"} value={token}
+              onChange={(event) => setToken(event.target.value)} autoComplete="off" spellCheck={false}
+              autoCapitalize="none" required disabled={saving} />
+            <button type="button" className="admin-token-toggle" aria-controls="admin-token"
+              aria-label={showToken ? "Hide admin token" : "Show admin token"}
+              title={showToken ? "Hide admin token" : "Show admin token"}
+              onClick={() => setShowToken((visible) => !visible)}>
+              <span className="admin-token-eye" data-visible={showToken} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
         {error && <p role="alert" className="form-error">{error}</p>}
         {notice && <p role="status" className="form-notice">{notice}</p>}
         <button type="submit" className="primary-button" disabled={saving || !name.trim() || !token.trim()}>
