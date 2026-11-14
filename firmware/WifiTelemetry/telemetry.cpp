@@ -1,26 +1,27 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <NetworkClientSecure.h>
 #include <SD_MMC.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_random.h>
 #include <fcntl.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include "../include/secrets.h"
+#include "telemetry_ca.h"
 
 namespace {
 constexpr int modemRx = 17;
 constexpr int modemTx = 18;
 constexpr unsigned long baud = 115200;
-constexpr unsigned long pollInterval = 10000;
+constexpr unsigned long pollInterval = 8000;
 HardwareSerial modem(1);
 
-bool command(const char *request, const char *prefix, String &data, unsigned long timeout) {
-  while (modem.available()) modem.read();
-  modem.print(request);
-  modem.print("\r\n");
+bool modemReply(const char *prefix, String &data, unsigned long timeout,
+                const char *terminal = "OK") {
   String line;
   bool discard = false;
   data = "";
@@ -32,6 +33,8 @@ bool command(const char *request, const char *prefix, String &data, unsigned lon
       delay(1);
       continue;
     }
+    // CCERTDOWN can emit its prompt without a trailing newline.
+    if (byte == '>' && line.isEmpty() && terminal && terminal[0] == '>') return true;
     if (byte == '\r') continue;
     if (byte != '\n') {
       if (line.length() < 200 && !discard) line += static_cast<char>(byte);
@@ -40,21 +43,34 @@ bool command(const char *request, const char *prefix, String &data, unsigned lon
     }
     if (!discard) {
       line.trim();
-      if (line == "OK") return true;
-      if (line == "ERROR" || line.startsWith("+CME ERROR:")) {
-        Serial.printf("%s returned %s\n", request, line.c_str());
-        return false;
-      }
+      if (terminal && line == terminal) return true;
+      if (line == "ERROR" || line.startsWith("+CME ERROR:")) return false;
       if (prefix && line.startsWith(prefix)) {
         data = line.substring(strlen(prefix));
         data.trim();
+        if (!terminal) return true;
       }
     }
     line = "";
     discard = false;
   }
-  Serial.printf("%s timed out\n", request);
   return false;
+}
+
+void modemRequest(const char *request) {
+  while (modem.available()) modem.read();
+  modem.print(request);
+  modem.print("\r\n");
+}
+
+bool command(const char *request, const char *prefix, String &data, unsigned long timeout) {
+  modemRequest(request);
+  return modemReply(prefix, data, timeout);
+}
+
+bool modemOk(const String &request, unsigned long timeout = 1500) {
+  String response;
+  return command(request.c_str(), nullptr, response, timeout);
 }
 
 bool coordinate(const String &field, const String &hemisphere, char positive, char negative,
@@ -126,6 +142,50 @@ double readBatteryVoltage() {
   return ((high << 8) | low) * 0.000078125;
 }
 
+JsonObject beginSample(JsonDocument &batch, const char *timestamp, double battery) {
+  if (counter == UINT32_MAX) {
+    randomId(bootId);
+    counter = 0;
+  }
+  char sequence[44];
+  snprintf(sequence, sizeof(sequence), "%s:%010lu", bootId, (unsigned long)++counter);
+  batch["version"] = 1;
+  batch["deviceId"] = deviceId;
+  batch["firmwareVersion"] = "dual-link-0.4.0";
+  batch["recordingSessionId"] = sessionId;
+  batch["recordingState"] = "recording";
+  batch["transport"] = "wifi";
+  batch["batteryVoltage"] = battery;
+  auto sample = batch["samples"].to<JsonArray>().add<JsonObject>();
+  sample["sequence"] = sequence;
+  sample["timestamp"] = timestamp;
+  return sample;
+}
+
+bool clockReady() {
+  return time(nullptr) >= 1735689600;  // Reject the unset clock at startup.
+}
+
+void syncModemTime() {
+  String response;
+  if (!command("AT+CCLK?", "+CCLK:", response, 1500)) return;
+  int year, month, day, hour, minute, second, offset;
+  if (sscanf(response.c_str(), "\"%2d/%2d/%2d,%2d:%2d:%2d%3d\"",
+             &year, &month, &day, &hour, &minute, &second, &offset) != 7 ||
+      year < 25 || month < 1 || month > 12 || day < 1 || day > 31 ||
+      hour > 23 || minute > 59 || second > 59 || abs(offset) > 56) return;
+  tm local{};
+  local.tm_year = 100 + year;
+  local.tm_mon = month - 1;
+  local.tm_mday = day;
+  local.tm_hour = hour;
+  local.tm_min = minute;
+  local.tm_sec = second;
+  // CTZU mode 1 keeps the modem RTC in UTC.
+  const timeval now{mktime(&local), 0};
+  settimeofday(&now, nullptr);
+}
+
 void capture() {
   String response;
   String gps[9];
@@ -145,6 +205,12 @@ void capture() {
     return;
   }
   if (lastTimestamp == timestamp) return;
+  // A valid GNSS fix gives TLS a clock even with neither uplink available.
+  tm utc{};
+  if (strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) {
+    const timeval now{mktime(&utc), 0};  // ESP32 boots with the UTC timezone.
+    settimeofday(&now, nullptr);
+  }
 
   String gnss[18];
   double satellites, hdop;
@@ -161,23 +227,8 @@ void capture() {
     return;
   }
 
-  if (counter == UINT32_MAX) {
-    randomId(bootId);
-    counter = 0;
-  }
-  char sequence[44];
-  snprintf(sequence, sizeof(sequence), "%s:%010lu", bootId, (unsigned long)++counter);
   JsonDocument batch;
-  batch["version"] = 1;
-  batch["deviceId"] = deviceId;
-  batch["firmwareVersion"] = "wifi-test-0.2.0";
-  batch["recordingSessionId"] = sessionId;
-  batch["recordingState"] = "recording";
-  batch["transport"] = "wifi";
-  batch["batteryVoltage"] = battery;
-  auto sample = batch["samples"].to<JsonArray>().add<JsonObject>();
-  sample["sequence"] = sequence;
-  sample["timestamp"] = timestamp;
+  auto sample = beginSample(batch, timestamp, battery);
   sample["latitude"] = latitude;
   sample["longitude"] = longitude;
   sample["speedMps"] = knots * 0.514444;
@@ -209,34 +260,231 @@ bool queueOnCard(const String &payload) {
   return true;
 }
 
-bool sendPayload(const String &payload, const char *sequence) {
-  NetworkClient network;
+bool acknowledged(int status, const String &body, const char *sequence, const char *link) {
+  if (status == 200) {
+    JsonDocument ack;
+    if (!deserializeJson(ack, body) && ack["version"] == 1 &&
+        ack["deviceId"] == deviceId && ack["accepted"][0]["sequence"] == sequence &&
+        (ack["accepted"][0]["status"] == "stored" || ack["accepted"][0]["status"] == "duplicate")) {
+      Serial.printf("%s acknowledged %s as %s\n", link, sequence,
+                    ack["accepted"][0]["status"].as<const char *>());
+      return true;
+    }
+  }
+  Serial.printf("%s upload failed (%d). Retaining sample for retry.\n", link, status);
+  return false;
+}
+
+bool sendWifi(const String &payload, const char *sequence) {
+  NetworkClient plain;
+  NetworkClientSecure secure;
+  const bool https = String(EBT_API_URL).startsWith("https://");
+  secure.setCACert(telemetryRootCa);
+  secure.setHandshakeTimeout(4);
   HTTPClient http;
   http.setConnectTimeout(3000);
   http.setTimeout(3000);
-  if (!http.begin(network, EBT_API_URL)) {
-    Serial.println("Could not configure HTTP connection");
-    return false;
-  }
+  NetworkClient &client = https ? static_cast<NetworkClient &>(secure) : plain;
+  if (!http.begin(client, EBT_API_URL)) return false;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", String("Bearer ") + EBT_DEVICE_KEY);
   const int status = http.POST(payload);
-  bool accepted = false;
-  if (status == 200) {
-    JsonDocument ack;
-    if (!deserializeJson(ack, http.getString()) && ack["version"] == 1 &&
-        ack["deviceId"] == deviceId && ack["accepted"][0]["sequence"] == sequence &&
-        (ack["accepted"][0]["status"] == "stored" || ack["accepted"][0]["status"] == "duplicate")) {
-      Serial.printf("Server acknowledged %s as %s\n", sequence, ack["accepted"][0]["status"].as<const char *>());
-      accepted = true;
-    } else {
-      Serial.println("Server returned an unexpected acknowledgement");
-    }
-  } else {
-    Serial.printf("Upload returned %d. Retaining sample for retry.\n", status);
+  return acknowledged(status, status == 200 ? http.getString() : String(), sequence, "Wi-Fi");
+}
+
+bool modemUpload(const String &request, const char *prompt, const char *bytes, size_t size) {
+  modemRequest(request.c_str());
+  String response;
+  if (!modemReply(nullptr, response, 2000, prompt)) return false;
+  return modem.write(reinterpret_cast<const uint8_t *>(bytes), size) == size &&
+         modemReply(nullptr, response, 3000);
+}
+
+bool configureModemTls() {
+  constexpr char caFile[] = "ebt-isrg-x1.pem";
+  String response;
+  if (!command("AT+CCERTLIST", "+CCERTLIST:", response, 1500) ||
+      response.indexOf(caFile) < 0) {
+    modemOk(String("AT+CCERTDELE=\"") + caFile + "\"");
+    if (!modemUpload(String("AT+CCERTDOWN=\"") + caFile + "\"," + strlen(telemetryRootCa),
+                     ">", telemetryRootCa, strlen(telemetryRootCa))) return false;
   }
-  http.end();
-  return accepted;
+  const time_t now = time(nullptr);
+  tm utc{};
+  gmtime_r(&now, &utc);
+  char clock[40];
+  if (!strftime(clock, sizeof(clock), "AT+CCLK=\"%y/%m/%d,%H:%M:%S+00\"", &utc)) return false;
+  return modemOk(clock) &&
+         modemOk("AT+CSSLCFG=\"sslversion\",0,3") &&
+         modemOk("AT+CSSLCFG=\"authmode\",0,1") &&
+         modemOk("AT+CSSLCFG=\"ignorelocaltime\",0,0") &&
+         modemOk("AT+CSSLCFG=\"enableSNI\",0,1") &&
+         modemOk("AT+CSSLCFG=\"negotiatetime\",0,10") &&
+         modemOk(String("AT+CSSLCFG=\"cacert\",0,\"") + caFile + "\"");
+}
+
+bool cellularConfigured = false;
+bool modemTlsReady = false;
+bool modemHttpReady = false;
+
+bool cellularReady() {
+  String response;
+  if (!command("AT+CPIN?", "+CPIN:", response, 1500) || response != "READY") return false;
+  if (!cellularConfigured) {
+    if (*EBT_CELLULAR_APN &&
+        !modemOk(String("AT+CGDCONT=1,\"IP\",\"") + EBT_CELLULAR_APN + "\"")) return false;
+    if ((*EBT_CELLULAR_USERNAME || *EBT_CELLULAR_PASSWORD) &&
+        !modemOk(String("AT+CGAUTH=1,1,\"") + EBT_CELLULAR_PASSWORD + "\",\"" +
+                 EBT_CELLULAR_USERNAME + "\"")) return false;
+    cellularConfigured = true;
+  }
+  int mode, registration;
+  return command("AT+CEREG?", "+CEREG:", response, 1500) &&
+         sscanf(response.c_str(), "%d,%d", &mode, &registration) == 2 &&
+         (registration == 1 || registration == 5);
+}
+
+bool startModemHttp() {
+  if (modemHttpReady) return true;
+  if (!cellularReady()) {
+    Serial.println("Waiting for LTE registration");
+    return false;
+  }
+  if (!modemTlsReady) {
+    modemTlsReady = configureModemTls();
+    if (!modemTlsReady) {
+      Serial.println("Could not configure LTE certificate verification");
+      return false;
+    }
+  }
+  modemOk("AT+HTTPTERM", 1000);  // Recover a session left open across an ESP reset.
+  modemHttpReady = modemOk("AT+HTTPINIT", 4000) &&
+      modemOk(String("AT+HTTPPARA=\"URL\",\"") + EBT_API_URL + "\"") &&
+      modemOk("AT+HTTPPARA=\"SSLCFG\",0") &&
+      modemOk("AT+HTTPPARA=\"CONNECTTO\",20") &&
+      modemOk("AT+HTTPPARA=\"RECVTO\",5") &&
+      modemOk("AT+HTTPPARA=\"CONTENT\",\"application/json\"") &&
+      modemOk(String("AT+HTTPPARA=\"USERDATA\",\"Authorization: Bearer ") + EBT_DEVICE_KEY + "\"");
+  return modemHttpReady;
+}
+
+bool sendCellular(const String &payload, const char *sequence) {
+  if (!startModemHttp() ||
+      !modemUpload(String("AT+HTTPDATA=") + payload.length() + ",3000",
+                   "DOWNLOAD", payload.c_str(), payload.length())) return false;
+  String response;
+  if (!command("AT+HTTPACTION=1", "+HTTPACTION:", response, 1500) ||
+      (response.isEmpty() && !modemReply("+HTTPACTION:", response, 8000, nullptr))) return false;
+  int method, status, length;
+  if (sscanf(response.c_str(), "%d,%d,%d", &method, &status, &length) != 3 || method != 1) return false;
+  if (status != 200 || length <= 0 || length > 512) return acknowledged(status, "", sequence, "LTE");
+  if (!command("AT+HTTPREAD=0,512", nullptr, response, 1500) ||
+      !modemReply("+HTTPREAD:", response, 1500, nullptr) || response.toInt() != length) return false;
+  String body;
+  body.reserve(length);
+  const auto started = millis();
+  while (body.length() < static_cast<size_t>(length) && millis() - started < 1500) {
+    const int byte = modem.read();
+    if (byte < 0) delay(1);
+    else body += static_cast<char>(byte);
+  }
+  return body.length() == static_cast<size_t>(length) && acknowledged(status, body, sequence, "LTE");
+}
+
+constexpr unsigned long lteRetryInterval = 60000;
+constexpr unsigned long wifiWindow = 30000;
+unsigned long lastLteFailure = 0;
+unsigned long wifiStarted = 0;
+unsigned long lastWifiAttempt = 0;
+unsigned int lteFailures = 0;
+bool wifiOn = false;
+bool wifiTried = false;
+bool wifiOnly = false;
+
+void stopWifi() {
+  if (!wifiOn) return;
+  WiFi.mode(WIFI_OFF);
+  wifiOn = false;
+}
+
+void serviceWifi() {
+  const auto now = millis();
+  if (wifiOn && WiFi.status() == WL_CONNECTED) {
+    wifiStarted = now;
+    return;
+  }
+  if (wifiOn && !wifiOnly && WiFi.status() != WL_CONNECTED &&
+      now - wifiStarted >= wifiWindow) {
+    lastWifiAttempt = now;
+    stopWifi();
+  }
+  if (wifiOn || (!wifiOnly && wifiTried && now - lastWifiAttempt < lteRetryInterval) ||
+      !*EBT_WIFI_SSID) return;
+  wifiTried = true;
+  wifiStarted = lastWifiAttempt = now;
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(true);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(EBT_WIFI_SSID, EBT_WIFI_PASSWORD);
+  wifiOn = true;
+  if (!clockReady()) configTime(0, 0, "pool.ntp.org");
+  Serial.println("Wi-Fi enabled");
+}
+
+bool sendPayload(JsonDocument &batch) {
+  const char *sequence = batch["samples"][0]["sequence"];
+  String payload;
+  if (!wifiOnly && (lteFailures < 3 || millis() - lastLteFailure >= lteRetryInterval)) {
+    batch["transport"] = "4g";
+    serializeJson(batch, payload);
+    if (sendCellular(payload, sequence)) {
+      lteFailures = 0;
+      wifiTried = false;
+      stopWifi();
+      return true;
+    }
+    modemHttpReady = false;
+    lastLteFailure = millis();
+    if (lteFailures < 3) ++lteFailures;
+    Serial.println("LTE upload unavailable");
+  }
+  if (!wifiOnly && lteFailures < 3) return false;
+  serviceWifi();
+  if (!wifiOn || WiFi.status() != WL_CONNECTED) return false;
+  batch["transport"] = "wifi";
+  payload = "";
+  serializeJson(batch, payload);
+  return sendWifi(payload, sequence);
+}
+
+// Status reports are useful only while fresh, so never queue them on microSD.
+void sendNoGpsStatus() {
+  constexpr unsigned long interval = 24000;
+  static unsigned long lastSent = 0;
+  static bool sent = false;
+  const auto now = millis();
+  if (!clockReady() || (sent && now - lastSent < interval)) return;
+  const double battery = readBatteryVoltage();
+  if (!isfinite(battery)) return;
+
+  const time_t currentTime = time(nullptr);
+  tm utc{};
+  gmtime_r(&currentTime, &utc);
+  char timestamp[21];
+  if (!strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc)) return;
+  JsonDocument batch;
+  auto sample = beginSample(batch, timestamp, battery);
+  sample["fixValid"] = false;
+  sample["satelliteCount"] = 0;
+  sample["latitude"] = nullptr;
+  sample["longitude"] = nullptr;
+  sample["speedMps"] = nullptr;
+  sample["headingDeg"] = nullptr;
+
+  if (sendPayload(batch)) {
+    sent = true;
+    lastSent = now;
+  }
 }
 
 bool readSequence(const String &payload, JsonDocument &batch) {
@@ -246,7 +494,7 @@ bool readSequence(const String &payload, JsonDocument &batch) {
   return sequence && strlen(sequence) == 43;
 }
 
-void sendQueued() {
+void sendQueued(unsigned long pollStarted) {
   File directory = SD_MMC.open(queueDir);
   if (!directory || !directory.isDirectory()) return;
   // Close the directory before deleting any file. FAT directory iteration
@@ -275,11 +523,13 @@ void sendQueued() {
     file.close();
     JsonDocument batch;
     if (!payload.endsWith("\n") || !readSequence(payload, batch)) continue;
-    if (!sendPayload(payload, batch["samples"][0]["sequence"].as<const char *>())) break;
+    if (!sendPayload(batch)) break;
+    const bool pollDue = millis() - pollStarted >= pollInterval;
     if (!SD_MMC.remove(paths[i])) {
       Serial.println("Could not remove acknowledged microSD record");
       break;
     }
+    if (pollDue) break;
   }
 }
 }  // namespace
@@ -292,14 +542,14 @@ void setup() {
   cardReady = SD_MMC.begin("/sdcard", true) &&
               (SD_MMC.exists(queueDir) || SD_MMC.mkdir(queueDir));
   WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(EBT_WIFI_SSID, EBT_WIFI_PASSWORD);
+  WiFi.mode(WIFI_OFF);
+  wifiOnly = !String(EBT_API_URL).startsWith("https://");
+  if (wifiOnly) serviceWifi();
 
   randomId(bootId);
   randomId(sessionId);
   delay(1500);
-  Serial.println("EBT Wi-Fi telemetry · lps-ebt-01");
+  Serial.println("EBT LTE/Wi-Fi telemetry · lps-ebt-01");
   Serial.println(cardReady ? "microSD queue ready" : "microSD unavailable. Using one RAM retry slot.");
   String response;
   while (!command("AT", nullptr, response, 1500)) delay(1000);
@@ -308,21 +558,38 @@ void setup() {
     delay(2000);
   }
   Serial.println("GNSS enabled");
+  if (!wifiOnly) modemOk("AT+CTZU=1");
 }
 
 void loop() {
-  if (pending.isEmpty()) capture();
+  const auto pollStarted = millis();
+  bool capturedFix = false;
+  if (pending.isEmpty()) {
+    capture();
+    capturedFix = !pending.isEmpty();
+  }
+  if (!clockReady() && !wifiOnly) {
+    syncModemTime();
+    if (!clockReady() && millis() >= 24000) serviceWifi();
+  }
   if (cardReady && !pending.isEmpty()) {
     if (queueOnCard(pending)) pending = "";
     else Serial.println("microSD write failed. Holding current fix in RAM.");
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    if (cardReady) sendQueued();
-    if (!pending.isEmpty()) {
+  if (wifiOnly || lteFailures >= 3) serviceWifi();
+  if (wifiOnly || clockReady()) {
+    if (cardReady) sendQueued(pollStarted);
+    if (!pending.isEmpty() && millis() - pollStarted < pollInterval) {
       JsonDocument batch;
-      if (readSequence(pending, batch) &&
-          sendPayload(pending, batch["samples"][0]["sequence"].as<const char *>())) pending = "";
+      if (readSequence(pending, batch) && sendPayload(batch)) pending = "";
     }
   }
-  delay(pollInterval);
+  // Require two missed polls before reporting GPS loss to avoid flashing
+  // the status on and off when one reading is incomplete.
+  static unsigned int missedPolls = 0;
+  if (capturedFix) missedPolls = 0;
+  else if (pending.isEmpty() && missedPolls < 2) ++missedPolls;
+  if (missedPolls == 2 && millis() - pollStarted < pollInterval) sendNoGpsStatus();
+  const auto elapsed = millis() - pollStarted;
+  if (elapsed < pollInterval) delay(pollInterval - elapsed);
 }

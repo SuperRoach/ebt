@@ -1,1 +1,1 @@
-// The Wi-Fi telemetry firmware is implemented in telemetry.cpp.
+// LTE telemetry and Wi-Fi fallback are implemented in telemetry.cpp.

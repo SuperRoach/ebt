@@ -195,7 +195,9 @@ export function App() {
                 </div>
                 <div className="cart-chips">
                   <span className={`cart-status ${status.toLowerCase().replaceAll(" ", "-")}`}>
-                    <StatusDot pulseKey={liveSequence} />{status}
+                    <StatusDot pulseKey={liveSequence} />{status === "No GPS Fix"
+                      ? `Online · ${sample?.transport === "4g" ? "4G" : "Wi-Fi"} · No GPS fix`
+                      : status}
                   </span>
                   {sample && <TransportChip transport={sample.transport} />}
                 </div>
