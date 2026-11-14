@@ -84,6 +84,7 @@ function Telemetry({ sample, status, now }: { sample: StoredSample | undefined; 
 }
 
 export function App() {
+  const trailTooltipId = useId();
   const { devices, message, samples, connection, streamed, loading, error, now, saveDevice, retry } = useTracking();
   const [hidden, setHidden] = useState<string[]>([]);
   const [followId, setFollowId] = useState("");
@@ -153,7 +154,7 @@ export function App() {
       <div className="dashboard">
         <section className="map-panel" aria-labelledby="map-title">
           <div className="panel-heading">
-            <div>
+            <div className="map-title-row">
               <h2 id="map-title">Circuit map</h2>
               <p className="map-count">{onMap} {onMap === 1 ? "cart" : "carts"} on map{historicalOnMap > 0 && ` · ${historicalOnMap} last known`}</p>
             </div>
@@ -169,7 +170,10 @@ export function App() {
           </div>
           <CartMap carts={visible} followId={followId} fitRequest={fitRequest} />
           <div className="map-caption">
-            <span><span className="trail-key" aria-hidden="true" /> Past trail · up to 5 minutes</span>
+            <span className="trail-legend" tabIndex={0} aria-describedby={trailTooltipId}>
+              <span className="trail-key" aria-hidden="true" /> Past trail
+              <span className="battery-tooltip" id={trailTooltipId} role="tooltip">Up to 5 minutes</span>
+            </span>
             {!onMap && <span>{loading ? "Loading cart positions…" : "No cart positions available"}</span>}
             {followId && !visible.some(({ device, status }) => device.id === followId && status === "Live") && <span>Follow paused until the cart has a current fix</span>}
           </div>
