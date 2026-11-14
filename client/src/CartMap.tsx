@@ -5,6 +5,7 @@ import type { Device } from "./api.js";
 import { type CartStatus, position, type trailSegments } from "./tracking.js";
 
 const circuit: L.LatLngTuple = [-37.0442, 143.7422];
+const arcgisApiKey = import.meta.env.VITE_ARCGIS_API_KEY?.trim();
 
 export interface MapCart {
   device: Device;
@@ -25,14 +26,9 @@ const basemaps = {
     maxNativeZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   },
-  Satellite: {
-    url: "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg",
-    maxNativeZoom: 14,
-    attribution: '<a href="https://cloudless.eox.at/">EOxCloudless</a> by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 &amp; 2017) · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>',
-  },
 } as const;
 
-type Basemap = keyof typeof basemaps;
+type Basemap = "Street" | "Satellite";
 
 export function CartMap({ carts, followId, fitRequest }: {
   carts: MapCart[];
@@ -49,7 +45,7 @@ export function CartMap({ carts, followId, fitRequest }: {
   }>());
   const lastFit = useRef(0);
   const [basemap, setBasemap] = useState<Basemap>("Street");
-  const [tileError, setTileError] = useState(false);
+  const [tileError, setTileError] = useState<string | null>(null);
 
   useEffect(() => {
     const map = L.map(container.current!, { zoomControl: false, maxZoom: 19 }).setView(circuit, 16);
@@ -68,13 +64,30 @@ export function CartMap({ carts, followId, fitRequest }: {
 
   useEffect(() => {
     const map = instance.current!;
-    const { url, ...options } = basemaps[basemap];
-    const layer = L.tileLayer(url, { ...options, maxZoom: 19, referrerPolicy: "strict-origin-when-cross-origin" });
+    if (basemap === "Satellite" && !arcgisApiKey) {
+      setTileError("Set VITE_ARCGIS_API_KEY to enable Esri satellite imagery.");
+      return;
+    }
+
+    const layer = basemap === "Satellite"
+      ? L.tileLayer(
+          `https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=${encodeURIComponent(arcgisApiKey!)}`,
+          {
+            maxZoom: 19,
+            attribution: '<a href="https://www.esri.com/">Esri</a>, Vantor, Earthstar Geographics, and the GIS User Community',
+            referrerPolicy: "strict-origin-when-cross-origin",
+          },
+        )
+      : L.tileLayer(basemaps.Street.url, {
+          ...basemaps.Street,
+          maxZoom: 19,
+          referrerPolicy: "strict-origin-when-cross-origin",
+        });
     let failures = 0;
-    setTileError(false);
+    setTileError(null);
     layer.on("loading", () => { failures = 0; });
     layer.on("tileerror", () => { failures++; });
-    layer.on("load", () => setTileError(failures > 0));
+    layer.on("load", () => setTileError(failures > 0 ? "Some map tiles are unavailable." : null));
     layer.addTo(map);
     return () => { layer.remove(); };
   }, [basemap]);
@@ -156,6 +169,6 @@ export function CartMap({ carts, followId, fitRequest }: {
         <button type="button" key={name} aria-pressed={basemap === name} onClick={() => setBasemap(name)}>{name}</button>,
       )}
     </div>
-    {tileError && <p className="tile-error" role="status">Some map tiles are unavailable.</p>}
+    {tileError && <p className="tile-error" role="status">{tileError}</p>}
   </div>;
 }
