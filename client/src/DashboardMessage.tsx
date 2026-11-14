@@ -2,17 +2,25 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AdminTokenField } from "./AdminTokenField.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const slideDuration = 350;
+const announcementDuration = 10_000;
 
-function MessagePreview({ message }: { message: string }) {
+function MessagePreview({ message, animate }: { message: string; animate: boolean }) {
   const [length, setLength] = useState<number>();
 
   useEffect(() => {
+    if (!animate) {
+      setLength(undefined);
+      return;
+    }
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let frame = 0;
     let deadline = 0;
+    let startTimer = 0;
     function finish() {
       cancelAnimationFrame(frame);
       window.clearTimeout(deadline);
+      window.clearTimeout(startTimer);
       setLength(undefined);
     }
     function animate() {
@@ -34,16 +42,17 @@ function MessagePreview({ message }: { message: string }) {
       frame = requestAnimationFrame(type);
       deadline = window.setTimeout(finish, duration + 100);
     }
-    animate();
-    motion.addEventListener("change", animate);
+    startTimer = window.setTimeout(animate, slideDuration);
+    motion.addEventListener("change", finish);
     document.addEventListener("visibilitychange", finish);
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(deadline);
-      motion.removeEventListener("change", animate);
+      window.clearTimeout(startTimer);
+      motion.removeEventListener("change", finish);
       document.removeEventListener("visibilitychange", finish);
     };
-  }, [message]);
+  }, [message, animate]);
 
   return <>
     <span className="message-preview-text" aria-hidden="true" data-typing={length !== undefined}>
@@ -65,6 +74,26 @@ export function DashboardMessage({ message, adminToken, saveMessage }: {
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [announcement, setAnnouncement] = useState<string>();
+  const announcing = Boolean(message && announcement === message);
+
+  useEffect(() => {
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!message || motion.matches || document.hidden) {
+      setAnnouncement(undefined);
+      return;
+    }
+    const finish = () => setAnnouncement(undefined);
+    setAnnouncement(message);
+    const deadline = window.setTimeout(finish, announcementDuration);
+    motion.addEventListener("change", finish);
+    document.addEventListener("visibilitychange", finish);
+    return () => {
+      window.clearTimeout(deadline);
+      motion.removeEventListener("change", finish);
+      document.removeEventListener("visibilitychange", finish);
+    };
+  }, [message]);
 
   function openEditor() {
     setDraft(message);
@@ -93,16 +122,16 @@ export function DashboardMessage({ message, adminToken, saveMessage }: {
   }
 
   return <>
-    <h2><button className="dashboard-title-button" type="button" aria-haspopup="dialog"
+    <h2 data-announcing={announcing} onFocus={() => setAnnouncement(undefined)}><button className="dashboard-title-button" type="button" aria-haspopup="dialog"
       aria-label="Cart tracking, set dashboard message" onClick={openEditor}>
       Cart tracking <span className="dashboard-title-chevron" aria-hidden="true" />
     </button></h2>
-    {message && <div className="header-message">
+    {message && <div className="header-message" data-announcing={announcing}>
       <button className="message-preview" type="button" aria-haspopup="dialog" onClick={() => {
         setEditing(false);
         dialog.current?.showModal();
       }}>
-        <MessagePreview key={message} message={message} />
+        <MessagePreview key={message} message={message} animate={announcing} />
       </button>
       {adminToken && <button type="button" className="message-edit" onClick={openEditor}>Edit</button>}
     </div>}

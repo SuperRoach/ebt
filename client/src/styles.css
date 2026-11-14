@@ -236,7 +236,18 @@ select, input:not([type="checkbox"]) {
 .speed span { font-size: 0.82rem; color: var(--muted); letter-spacing: 0; }
 .battery-metric { padding-inline-start: 0.75rem; border-inline-start: 1px solid var(--border); }
 .dashboard-title { display: flex; align-items: baseline; gap: 0.4rem 0.85rem; min-width: 0; flex: 1; }
-.dashboard-title > h2 { flex-shrink: 0; }
+.dashboard-title > h2 {
+  flex-shrink: 0;
+  max-width: 12em;
+  white-space: nowrap;
+  transition: max-width 350ms ease, transform 350ms ease, opacity 250ms ease;
+}
+.dashboard-title > h2[data-announcing="true"] {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6em);
+  pointer-events: none;
+}
 .dashboard-title-button {
   display: inline-flex;
   align-items: center;
@@ -272,7 +283,19 @@ select, input:not([type="checkbox"]) {
   text-align: start;
 }
 .message-preview:hover { background: transparent; text-decoration: underline; }
-.message-preview-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: message-pulse 850ms ease-out; }
+.message-preview-text {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: font-size 350ms ease;
+}
+.header-message[data-announcing="true"] .message-preview-text {
+  font-size: clamp(1.35rem, 2.8vw, 2.15rem);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  animation: message-pulse 850ms ease-out 350ms both;
+}
 .message-preview-text[data-typing="true"]::after {
   content: "";
   display: inline-block;
@@ -298,15 +321,18 @@ select, input:not([type="checkbox"]) {
 }
 .admin-message-action { margin-top: 0.85rem; }
 @keyframes message-pulse {
-  0%, 100% { text-shadow: 0 0 0 transparent; }
+  0% { opacity: 0; text-shadow: 0 0 0 transparent; }
+  12% { opacity: 1; }
   40% { text-shadow: 0 0 0.45rem #197b9d77; }
+  100% { opacity: 1; text-shadow: 0 0 0 transparent; }
 }
 @keyframes message-open {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .message-dialog[open], .message-preview-text { animation: none; }
+  .message-dialog[open], .header-message[data-announcing="true"] .message-preview-text { animation: none; }
+  .dashboard-title > h2, .message-preview-text { transition: none; }
 }
 .cart-readings { align-items: center; }
 .battery-icon { position: relative; width: 1.05rem; height: 0.6rem; flex-shrink: 0; border: 1.5px solid currentColor; border-radius: 2px; color: var(--muted); }
@@ -430,6 +456,8 @@ dialog input { width: 100%; min-height: 44px; }
   main { padding-block: 1rem; }
   .page-heading { align-items: flex-start; flex-wrap: wrap; }
   .dashboard-title { flex-basis: 100%; flex-direction: column; align-items: stretch; }
+  .dashboard-title > h2 { max-height: 3.5rem; transition-property: max-height, transform, opacity; }
+  .dashboard-title > h2[data-announcing="true"] { max-height: 0; }
   .panel-heading { padding: 0.8rem; }
   .map-frame { margin-inline: 0.45rem; }
   .map-caption { padding-inline: 0.65rem; }
