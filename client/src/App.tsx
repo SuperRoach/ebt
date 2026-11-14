@@ -17,11 +17,21 @@ function StatusDot({ pulseKey }: { pulseKey?: string }) {
   </span>;
 }
 
+function signalBars(reading: number | null, thresholds: readonly number[]) {
+  if (reading == null) return 0;
+  return 1 + thresholds.filter((threshold) => reading >= threshold).length;
+}
+
+const cellularBars = [1, 2, 3, 4];
+
 function TransportChip({ sample }: { sample: StoredSample }) {
   const tooltipId = useId();
   const { transport, cellularRsrpDbm, cellularRsrqDb, cellularSinrDb, cellularRssiDbm } = sample;
   const hasSignal = [cellularRsrpDbm, cellularRsrqDb, cellularSinrDb, cellularRssiDbm].some((value) => value != null);
   const quality = cellularRsrpDbm == null ? "" : cellularRsrpDbm >= -90 ? "Good" : cellularRsrpDbm >= -105 ? "OK" : "Poor";
+  const bars = cellularRsrpDbm != null
+    ? signalBars(cellularRsrpDbm, [-105, -90, -80])
+    : signalBars(cellularRssiDbm, [-100, -85, -75]);
   const signalDetails = [
     cellularRsrpDbm != null && `RSRP ${cellularRsrpDbm} dBm`,
     cellularRsrqDb != null && `RSRQ ${cellularRsrqDb} dB`,
@@ -29,9 +39,13 @@ function TransportChip({ sample }: { sample: StoredSample }) {
     cellularRssiDbm != null && `RSSI ${cellularRssiDbm} dBm`,
   ].filter(Boolean).join(" · ");
   const measuredAt = hasSignal ? ` · Measured ${localTime.format(new Date(sample.receivedAt))}` : "";
-  const label = transport === "wifi" ? "Wi-Fi" : `4G cellular${quality ? ` · ${quality}` : hasSignal ? " · Signal measured" : " · Signal unavailable"}${signalDetails ? ` · ${signalDetails}` : ""}${measuredAt}`;
+  const strength = bars ? ` · ${bars} of 4 bars` : "";
+  const label = transport === "wifi" ? "Wi-Fi" : `4G cellular${strength}${quality ? ` · ${quality}` : !bars && !hasSignal ? " · Signal unavailable" : ""}${signalDetails ? ` · ${signalDetails}` : ""}${measuredAt}`;
   return <span className="transport-chip" tabIndex={0} aria-describedby={tooltipId}>
-    <span className={`transport-icon ${transport === "wifi" ? "wifi-icon" : "cellular-icon"}`} aria-hidden="true" />
+    {transport === "wifi" ? <span className="transport-icon wifi-icon" aria-hidden="true" /> :
+      <span className="transport-icon cellular-icon" aria-hidden="true">
+        {cellularBars.map((bar) => <span key={bar} data-filled={bar <= bars} />)}
+      </span>}
     <span className="battery-tooltip" id={tooltipId} role="tooltip">{label}</span>
   </span>;
 }

@@ -223,7 +223,12 @@ select, input:not([type="checkbox"]) {
 .wifi-icon::before, .wifi-icon::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); border: 2px solid transparent; border-top-color: currentColor; border-radius: 50%; }
 .wifi-icon::before { top: 2px; width: 14px; height: 10px; }
 .wifi-icon::after { top: 5px; width: 8px; height: 6px; }
-.cellular-icon { background: currentColor; clip-path: polygon(0 100%, 0 70%, 20% 70%, 20% 100%, 27% 100%, 27% 50%, 47% 50%, 47% 100%, 54% 100%, 54% 28%, 74% 28%, 74% 100%, 81% 100%, 81% 6%, 100% 6%, 100% 100%); }
+.cellular-icon { display: inline-grid; grid-template-columns: repeat(4, 1fr); align-items: end; gap: 1px; }
+.cellular-icon > span { height: 4px; background: currentColor; opacity: 0.25; }
+.cellular-icon > span:nth-child(2) { height: 7px; }
+.cellular-icon > span:nth-child(3) { height: 10px; }
+.cellular-icon > span:nth-child(4) { height: 13px; }
+.cellular-icon > span[data-filled="true"] { opacity: 1; }
 .cart-number { width: 2.25rem; height: 2.25rem; border-radius: 10px; background: var(--cart-colour); }
 .cart-name { min-width: 0; overflow-wrap: anywhere; }
 .cart-name h3 { font-size: 1rem; line-height: 1.2; }
