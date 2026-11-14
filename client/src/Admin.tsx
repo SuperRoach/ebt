@@ -31,6 +31,25 @@ export function Admin({ devices, defaultColours, saveDevice, uploadFirmware, adm
     setError("");
   }
 
+  function chooseFirmware(file: File | null) {
+    setFirmwareFile(file);
+    if (!file || !/\.bin$/i.test(file.name)) return;
+
+    const filename = file.name.slice(0, -4);
+    const device = devices.reduce<Device | undefined>((match, candidate) => {
+      if (filename.startsWith(`${candidate.id}-`) && (!match || candidate.id.length > match.id.length)) {
+        return candidate;
+      }
+      return match;
+    }, undefined);
+    if (!device) return;
+
+    const version = filename.slice(device.id.length + 1);
+    if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$/.test(version)) return;
+    if (device.id !== id) select(device.id);
+    setFirmwareVersion(version);
+  }
+
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token.trim() || !firmwareVersion.trim() || !firmwareFile) return;
@@ -110,13 +129,13 @@ export function Admin({ devices, defaultColours, saveDevice, uploadFirmware, adm
           <summary>Firmware update</summary>
           <form onSubmit={(event) => void upload(event)}>
             <p className="admin-help">Upload a .bin file for {devices.find((device) => device.id === id)?.displayName ?? id}.</p>
+            <label>Firmware file
+              <input type="file" accept=".bin,application/octet-stream" required disabled={saving}
+                onChange={(event) => chooseFirmware(event.target.files?.[0] ?? null)} />
+            </label>
             <label>Firmware version
               <input value={firmwareVersion} onChange={(event) => setFirmwareVersion(event.target.value)} maxLength={64}
                 pattern={"[A-Za-z0-9][A-Za-z0-9.+_\\-]{0,63}"} required disabled={saving} />
-            </label>
-            <label>Firmware file
-              <input type="file" accept=".bin,application/octet-stream" required disabled={saving}
-                onChange={(event) => setFirmwareFile(event.target.files?.[0] ?? null)} />
             </label>
             <button type="submit" disabled={saving || !firmwareVersion.trim() || !firmwareFile || !token.trim()}>
               {pending === "firmware" ? "Uploading…" : "Upload firmware"}
