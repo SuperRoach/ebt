@@ -21,19 +21,44 @@ The [Waveshare V2 examples](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/ESP-
 
 ## Tracker telemetry
 
-From the repository root, copy the template if you do not already have a local header:
+From the repository root, create a private local config from the profile for the tracker being
+built. The two profiles share the same sketch but have distinct device IDs and API keys:
 
 ```sh
-cp -n firmware/include/secrets.h.example firmware/include/secrets.h
+cp -n firmware/profiles/tracker-01/secrets.h.example firmware/profiles/tracker-01/secrets.h
 ```
 
-In `firmware/include/secrets.h`, set the Wi-Fi credentials and the `EBT_DEVICE_KEY` for `lps-ebt-01`. Use `https://ebt.fly.dev/api/v1/telemetry` for LTE and Wi-Fi uploads. The firmware trusts ISRG Root X1, which anchors the site's current Let's Encrypt certificate chain. Leave the APN fields empty to use the modem's existing configuration. If the carrier requires an explicit APN or PAP credentials, fill them in before compiling.
+For Tracker 02, create `firmware/profiles/tracker-02/secrets.h` from its matching example instead.
+In each private local profile, set the Wi-Fi credentials and the matching `EBT_DEVICE_KEY` from
+`server/.env`. Do not use Tracker 01's key for Tracker 02. Before compiling, copy only the target
+profile into the include path used by the shared sketch:
+
+```sh
+cp firmware/profiles/tracker-01/secrets.h firmware/include/secrets.h
+```
+
+For Tracker 02, use its corresponding `secrets.h` in that command. Use
+`https://ebt.fly.dev/api/v1/telemetry` for LTE and Wi-Fi uploads. The firmware trusts ISRG Root X1,
+which anchors the site's current Let's Encrypt certificate chain. Leave the APN fields empty to use
+the modem's existing configuration. If the carrier requires an explicit APN or PAP credentials,
+fill them in before compiling.
 
 For Wi-Fi-only bench testing, set `EBT_API_URL` to the Mac's LAN HTTP address ending in `:3001/api/v1/telemetry`. Set `TELEMETRY_HOST` to the Mac's Wi-Fi IPv4 address in `server/.env` and run `npm start` from the root. Use a trusted 2.4 GHz network that lets the tracker reach the Mac.
 
-Install `ArduinoJson@7.4.2` with Arduino CLI. Compile and upload as above using the `firmware/WifiTelemetry` sketch and add `,PartitionScheme=huge_app` to the board options. The serial monitor reports captures and server acknowledgements. Check the stored fix on the dashboard for the API you configured.
+Install `ArduinoJson@7.4.2` with Arduino CLI. Compile and upload as above using the
+`firmware/WifiTelemetry` sketch and add `,PartitionScheme=huge_app` to the board options. Build one
+tracker profile at a time, using a separate output directory such as
+`/tmp/ebt-build-tracker-01` or `/tmp/ebt-build-tracker-02`. The serial monitor prints the selected
+device ID and reports captures and server acknowledgements. Check the stored fix on the dashboard
+for the API you configured.
 
 The tracker targets one GPS poll every 8 seconds. If a modem command or queue upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout.
+
+## OTA rollout groundwork
+
+The API now supports uploading a `.bin` from Device admin and assigning that release to exactly one selected tracker. It stores artifacts under `FIRMWARE_STORAGE_DIR` (the Fly deployment uses `/data/firmware` on the persistent volume), returns an update offer only to that tracker's authenticated telemetry requests, and requires the same device key to download the artifact. Upload a distinct version for each tracker profile because each image currently contains that tracker's device ID and API key.
+
+The current tracker firmware does not yet consume the update offer or install the binary. Do not rely on the upload action to update a board yet. The next firmware step is adding an OTA-capable partition layout and a verified download/install path; the first USB flash will need to install that layout and OTA-enabled firmware before remote updates can run. Keep using the documented USB compile/upload procedure until that firmware step is complete.
 
 Insert a FAT32 microSD card before powering on the tracker. The firmware saves each fix in `/ebt-queue` and deletes the file after the server acknowledges its sequence. The tracker scans that directory again after a reboot and retries queued fixes with their original sequences. Without a usable card the tracker can retry one sample in RAM.
 

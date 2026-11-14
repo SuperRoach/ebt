@@ -1,10 +1,11 @@
 import { useRef, useState, type FormEvent } from "react";
 import type { Device, DeviceSettings } from "./api.js";
 
-export function Admin({ devices, defaultColours, saveDevice }: {
+export function Admin({ devices, defaultColours, saveDevice, uploadFirmware }: {
   devices: Device[];
   defaultColours: readonly string[];
   saveDevice: (id: string, settings: DeviceSettings, token: string) => Promise<void>;
+  uploadFirmware: (id: string, version: string, file: File, token: string) => Promise<{ release: { version: string }; assignedTo: string }>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [id, setId] = useState("");
@@ -15,6 +16,8 @@ export function Admin({ devices, defaultColours, saveDevice }: {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [firmwareVersion, setFirmwareVersion] = useState("");
+  const [firmwareFile, setFirmwareFile] = useState<File | null>(null);
 
   function select(deviceId: string) {
     setId(deviceId);
@@ -23,6 +26,26 @@ export function Admin({ devices, defaultColours, saveDevice }: {
     setColour(device?.colour ?? null);
     setNotice("");
     setError("");
+  }
+
+  async function upload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token.trim() || !firmwareVersion.trim() || !firmwareFile) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await uploadFirmware(id, firmwareVersion.trim(), firmwareFile, token.trim());
+      setNotice(`${result.release.version} uploaded and assigned to ${result.assignedTo}.`);
+      setFirmwareFile(null);
+      setFirmwareVersion("");
+      const input = dialog.current?.querySelector<HTMLInputElement>('input[type="file"]');
+      if (input) input.value = "";
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Firmware could not be uploaded.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -49,12 +72,27 @@ export function Admin({ devices, defaultColours, saveDevice }: {
     }}>Device admin</button>
     <dialog ref={dialog} aria-labelledby="admin-title" onCancel={(event) => {
       if (saving) event.preventDefault();
-    }} onClose={() => { setToken(""); setShowToken(false); }}>
+      }} onClose={() => { setToken(""); setShowToken(false); setFirmwareFile(null); }}>
       <div className="dialog-heading">
         <h2 id="admin-title">Device admin</h2>
         <button type="button" disabled={saving} onClick={() => dialog.current?.close()}>Close</button>
       </div>
-      {devices.length ? <form onSubmit={(event) => void save(event)}>
+      {devices.length ? <>
+      <div className="admin-token-field">
+        <label htmlFor="admin-token">Admin token</label>
+        <div className="admin-token-control">
+          <input id="admin-token" type={showToken ? "text" : "password"} value={token}
+            onChange={(event) => setToken(event.target.value)} autoComplete="off" spellCheck={false}
+            autoCapitalize="none" required disabled={saving} />
+          <button type="button" className="admin-token-toggle" aria-controls="admin-token"
+            aria-label={showToken ? "Hide admin token" : "Show admin token"}
+            title={showToken ? "Hide admin token" : "Show admin token"}
+            onClick={() => setShowToken((visible) => !visible)}>
+            <span className="admin-token-eye" data-visible={showToken} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <form onSubmit={(event) => void save(event)}>
         <label>Device
           <select value={id} onChange={(event) => select(event.target.value)} disabled={saving}>
             {devices.map((device) => <option key={device.id} value={device.id}>{device.displayName} ({device.id})</option>)}
@@ -72,26 +110,31 @@ export function Admin({ devices, defaultColours, saveDevice }: {
             Use default colour
           </button>
         </div>
-        <div className="admin-token-field">
-          <label htmlFor="admin-token">Admin token</label>
-          <div className="admin-token-control">
-            <input id="admin-token" type={showToken ? "text" : "password"} value={token}
-              onChange={(event) => setToken(event.target.value)} autoComplete="off" spellCheck={false}
-              autoCapitalize="none" required disabled={saving} />
-            <button type="button" className="admin-token-toggle" aria-controls="admin-token"
-              aria-label={showToken ? "Hide admin token" : "Show admin token"}
-              title={showToken ? "Hide admin token" : "Show admin token"}
-              onClick={() => setShowToken((visible) => !visible)}>
-              <span className="admin-token-eye" data-visible={showToken} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
         {error && <p role="alert" className="form-error">{error}</p>}
         {notice && <p role="status" className="form-notice">{notice}</p>}
         <button type="submit" className="primary-button" disabled={saving || !name.trim() || !token.trim()}>
           {saving ? "Saving…" : "Save settings"}
         </button>
-      </form> : <p>No devices are available to edit.</p>}
+      </form>
+      <hr />
+      <h3>Firmware update</h3>
+      <p className="admin-help">Upload a compiled .bin file. It will be assigned only to the selected tracker.</p>
+      <form onSubmit={(event) => void upload(event)}>
+        <label>Firmware version
+          <input value={firmwareVersion} onChange={(event) => setFirmwareVersion(event.target.value)} maxLength={64}
+            pattern="[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}" placeholder="dual-link-0.5.0" required disabled={saving} />
+        </label>
+        <label>Firmware .bin
+          <input type="file" accept=".bin,application/octet-stream" required disabled={saving}
+            onChange={(event) => setFirmwareFile(event.target.files?.[0] ?? null)} />
+        </label>
+        {error && <p role="alert" className="form-error">{error}</p>}
+        {notice && <p role="status" className="form-notice">{notice}</p>}
+        <button type="submit" className="primary-button" disabled={saving || !firmwareVersion.trim() || !firmwareFile || !token.trim()}>
+          {saving ? "Uploading…" : `Upload to ${devices.find((device) => device.id === id)?.displayName ?? id}`}
+        </button>
+      </form>
+      </> : <p>No devices are available.</p>}
     </dialog>
   </>;
 }

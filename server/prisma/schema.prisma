@@ -13,6 +13,8 @@ model Device {
   colour      String?
   apiKeyHash  String      @unique
   samples     GpsSample[]
+  firmwareReleases FirmwareRelease[]
+  firmwareAssignment FirmwareAssignment?
 }
 
 model GpsSample {
@@ -27,6 +29,10 @@ model GpsSample {
   recordingSessionId String
   recordingState     String
   transport          String
+  cellularRssiDbm    Float?
+  cellularRsrpDbm    Float?
+  cellularRsrqDb     Float?
+  cellularSinrDb     Float?
   batteryVoltage     Float
   latitude           Float?
   longitude          Float?
@@ -38,4 +44,29 @@ model GpsSample {
 
   @@id([deviceId, sequence])
   @@index([deviceId, timestamp, sequence])
+}
+
+model FirmwareRelease {
+  id             String   @id
+  targetDeviceId String
+  targetDevice   Device   @relation(fields: [targetDeviceId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  version        String
+  sha256         String
+  sizeBytes      Int
+  createdAt      DateTime @default(now())
+  assignment     FirmwareAssignment?
+
+  @@unique([targetDeviceId, version])
+  @@index([targetDeviceId, createdAt])
+}
+
+model FirmwareAssignment {
+  deviceId   String   @id
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  releaseId  String   @unique
+  release    FirmwareRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  status     String   @default("assigned")
+  message    String?
+  assignedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }

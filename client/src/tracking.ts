@@ -16,6 +16,10 @@ export function fromEvent(event: TelemetryEvent): StoredSample[] {
   const { samples, version, type: _type, ...metadata } = event;
   return samples.map((sample) => ({
     ...sample, ...metadata, protocolVersion: version, hdop: sample.hdop ?? null,
+    cellularRssiDbm: metadata.cellularSignal?.rssiDbm ?? null,
+    cellularRsrpDbm: metadata.cellularSignal?.rsrpDbm ?? null,
+    cellularRsrqDb: metadata.cellularSignal?.rsrqDb ?? null,
+    cellularSinrDb: metadata.cellularSignal?.sinrDb ?? null,
   }));
 }
 

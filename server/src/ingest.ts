@@ -9,7 +9,7 @@ export class SequenceConflict extends Error {
 }
 
 export async function ingest(db: PrismaClient, batch: TelemetryBatch) {
-  const { deviceId, version, firmwareVersion, recordingSessionId, recordingState, transport, batteryVoltage } = batch;
+  const { deviceId, version, firmwareVersion, recordingSessionId, recordingState, transport, batteryVoltage, cellularSignal } = batch;
   const receivedAt = new Date().toISOString();
   const captures = batch.samples.map((sample) => {
     const { sequence, latitude, longitude, speedMps, headingDeg, fixValid, satelliteCount } = sample;
@@ -26,6 +26,8 @@ export async function ingest(db: PrismaClient, batch: TelemetryBatch) {
       row: Prisma.sql`(
         ${deviceId}, ${sequence}, ${captureHash}, ${timestamp}, ${receivedAt}, ${version},
         ${firmwareVersion}, ${recordingSessionId}, ${recordingState}, ${transport}, ${batteryVoltage},
+        ${cellularSignal?.rssiDbm ?? null}, ${cellularSignal?.rsrpDbm ?? null},
+        ${cellularSignal?.rsrqDb ?? null}, ${cellularSignal?.sinrDb ?? null},
         ${latitude}, ${longitude}, ${speedMps}, ${headingDeg}, ${fixValid}, ${satelliteCount}, ${hdop}
       )`,
     };
@@ -38,6 +40,7 @@ export async function ingest(db: PrismaClient, batch: TelemetryBatch) {
       INSERT INTO "GpsSample" (
         "deviceId", "sequence", "captureHash", "timestamp", "receivedAt", "protocolVersion",
         "firmwareVersion", "recordingSessionId", "recordingState", "transport", "batteryVoltage",
+        "cellularRssiDbm", "cellularRsrpDbm", "cellularRsrqDb", "cellularSinrDb",
         "latitude", "longitude", "speedMps", "headingDeg", "fixValid", "satelliteCount", "hdop"
       ) VALUES ${Prisma.join(captures.map(({ row }) => row))}
       ON CONFLICT ("deviceId", "sequence") DO NOTHING

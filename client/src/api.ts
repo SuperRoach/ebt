@@ -13,6 +13,10 @@ export interface StoredSample extends Omit<GpsSample, "hdop">,
   protocolVersion: number;
   receivedAt: string;
   hdop: number | null;
+  cellularRssiDbm: number | null;
+  cellularRsrpDbm: number | null;
+  cellularRsrqDb: number | null;
+  cellularSinrDb: number | null;
 }
 
 export interface TelemetryEvent extends TelemetryBatch {
@@ -52,3 +56,20 @@ export const updateDevice = (id: string, settings: DeviceSettings, token: string
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(settings),
   });
+
+export async function uploadFirmware(id: string, version: string, file: File, token: string) {
+  const response = await fetch(new URL(`/api/v1/admin/devices/${encodeURIComponent(id)}/firmware`, apiOrigin), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/octet-stream",
+      "X-Firmware-Version": version,
+    },
+    body: file,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(body?.error || `Firmware upload returned HTTP ${response.status}`);
+  }
+  return response.json() as Promise<{ release: { id: string; version: string }; assignedTo: string }>;
+}
