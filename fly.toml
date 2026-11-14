@@ -9,6 +9,7 @@ kill_signal = "SIGTERM"
   HOST = "0.0.0.0"
   PORT = "8080"
   DATABASE_URL = "file:/data/ebt.db"
+  FIRMWARE_STORAGE_DIR = "/data/firmware"
 
 [[mounts]]
   source = "ebt_data"

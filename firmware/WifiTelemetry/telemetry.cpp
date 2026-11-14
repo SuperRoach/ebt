@@ -88,7 +88,10 @@ bool coordinate(const String &field, const String &hemisphere, char positive, ch
   return true;
 }
 
-constexpr char deviceId[] = "lps-ebt-01";
+#ifndef EBT_DEVICE_ID
+#error "Select a tracker profile that defines EBT_DEVICE_ID"
+#endif
+constexpr char deviceId[] = EBT_DEVICE_ID;
 constexpr char queueDir[] = "/ebt-queue";
 constexpr size_t maxRecordSize = 1024;
 constexpr int uploadsPerPoll = 8;
@@ -549,7 +552,7 @@ void setup() {
   randomId(bootId);
   randomId(sessionId);
   delay(1500);
-  Serial.println("EBT LTE/Wi-Fi telemetry · lps-ebt-01");
+  Serial.printf("EBT LTE/Wi-Fi telemetry · %s\n", deviceId);
   Serial.println(cardReady ? "microSD queue ready" : "microSD unavailable. Using one RAM retry slot.");
   String response;
   while (!command("AT", nullptr, response, 1500)) delay(1000);

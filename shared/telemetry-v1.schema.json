@@ -12,6 +12,17 @@
     "recordingSessionId": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
     "recordingState": {"enum": ["idle", "recording", "paused", "stopped"]},
     "transport": {"enum": ["wifi", "4g"]},
+    "cellularSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rssiDbm": {"type": "number", "minimum": -150, "maximum": 0},
+        "rsrpDbm": {"type": "number", "minimum": -150, "maximum": 0},
+        "rsrqDb": {"type": "number", "minimum": -50, "maximum": 0},
+        "sinrDb": {"type": "number", "minimum": -50, "maximum": 100}
+      },
+      "minProperties": 1
+    },
     "batteryVoltage": {"type": "number", "minimum": 0, "maximum": 30},
     "samples": {
       "type": "array",
