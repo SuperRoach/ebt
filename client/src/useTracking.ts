@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { history, listDevices, socketUrl, updateDevice, type Device, type DeviceSettings, type StoredSample } from "./api.js";
+import {
+  history, listDevices, socketUrl, updateDashboardMessage, updateDevice,
+  type DashboardMessage, type Device, type DeviceSettings, type StoredSample,
+} from "./api.js";
 import { connectTelemetry, type Connection } from "./telemetrySocket.js";
 import { fromEvent, mergeSamples } from "./tracking.js";
 
 export function useTracking() {
-  const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState<DashboardMessage>({ message: "", revision: 0 });
   const [devices, setDevices] = useState<Device[]>([]);
   const [samples, setSamples] = useState<Record<string, StoredSample[]>>({});
   const [connection, setConnection] = useState<Connection>("connecting");
@@ -15,6 +18,10 @@ export function useTracking() {
   const [refreshKey, setRefreshKey] = useState(0);
   const editedDevices = useRef(new Map<string, Device>());
   const openedAt = useRef(now);
+
+  function receiveMessage(next: DashboardMessage) {
+    setNotice((current) => next.revision >= current.revision ? next : current);
+  }
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(Date.now()), 1000);
@@ -40,9 +47,9 @@ export function useTracking() {
       const { signal } = controller;
       const editsAtStart = new Map(editedDevices.current);
       try {
-        const { devices: roster, message } = await listDevices(signal);
+        const { devices: roster, message, messageRevision } = await listDevices(signal);
         if (signal.aborted) return;
-        setMessage(message ?? "");
+        receiveMessage({ message: message ?? "", revision: messageRevision ?? 0 });
         setDevices(roster.map((device) => {
           const edited = editedDevices.current.get(device.id);
           return edited && edited !== editsAtStart.get(device.id) ? edited : device;
@@ -65,6 +72,7 @@ export function useTracking() {
     }
 
     const disconnect = connectTelemetry(socketUrl(), {
+      onDashboardMessage: receiveMessage,
       onState(state) {
         connected = state === "connected";
         setConnection(state);
@@ -104,5 +112,12 @@ export function useTracking() {
     setDevices((current) => current.map((entry) => entry.id === id ? device : entry));
   }
 
-  return { devices, message, samples, connection, streamed, loading, error, now, saveDevice, retry: () => setRefreshKey((key) => key + 1) };
+  async function saveMessage(message: string, token: string) {
+    receiveMessage(await updateDashboardMessage(message, token));
+  }
+
+  return {
+    devices, message: notice.message, samples, connection, streamed, loading, error, now,
+    saveDevice, saveMessage, retry: () => setRefreshKey((key) => key + 1),
+  };
 }

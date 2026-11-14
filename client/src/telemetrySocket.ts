@@ -1,10 +1,11 @@
-import type { TelemetryEvent } from "./api.js";
+import type { DashboardMessage, TelemetryEvent } from "./api.js";
 
 export type Connection = "connecting" | "connected" | "reconnecting";
 
 export function connectTelemetry(url: string, handlers: {
   onState: (state: Connection) => void;
   onTelemetry: (event: TelemetryEvent) => void;
+  onDashboardMessage: (event: DashboardMessage) => void;
 }) {
   let stopped = false;
   let attempts = 0;
@@ -38,14 +39,18 @@ export function connectTelemetry(url: string, handlers: {
     };
     current.onmessage = ({ data }) => {
       if (stopped || typeof data !== "string") return;
-      let event: TelemetryEvent;
+      let event: TelemetryEvent | (DashboardMessage & { type: "dashboard-message" });
       try {
-        event = JSON.parse(data) as TelemetryEvent;
+        event = JSON.parse(data);
       } catch {
         return;
       }
       if (event?.type === "telemetry" && event.version === 1 && Array.isArray(event.samples)) {
         handlers.onTelemetry(event);
+      }
+      if (event?.type === "dashboard-message" && typeof event.message === "string" &&
+          Number.isSafeInteger(event.revision)) {
+        handlers.onDashboardMessage(event);
       }
     };
     current.onerror = () => current.close();

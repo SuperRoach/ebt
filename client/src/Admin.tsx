@@ -1,10 +1,13 @@
 import { useRef, useState, type FormEvent } from "react";
 import type { Device, DeviceSettings } from "./api.js";
 
-export function Admin({ devices, defaultColours, saveDevice, uploadFirmware }: {
+export function Admin({ devices, defaultColours, saveDevice, uploadFirmware, adminToken, editMessage, hasMessage }: {
   devices: Device[];
   defaultColours: readonly string[];
   saveDevice: (id: string, settings: DeviceSettings, token: string) => Promise<void>;
+  adminToken: string;
+  editMessage: () => void;
+  hasMessage: boolean;
   uploadFirmware: (id: string, version: string, file: File, token: string) => Promise<{ release: { version: string }; assignedTo: string }>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -66,8 +69,9 @@ export function Admin({ devices, defaultColours, saveDevice, uploadFirmware }: {
   }
 
   return <>
-    <button className="admin-button" type="button" disabled={!devices.length} onClick={() => {
+    <button className="admin-button" type="button" onClick={() => {
       select(devices[0]?.id ?? "");
+      setToken(adminToken);
       dialog.current?.showModal();
     }}>Device admin</button>
     <dialog ref={dialog} aria-labelledby="admin-title" onCancel={(event) => {
@@ -135,6 +139,10 @@ export function Admin({ devices, defaultColours, saveDevice, uploadFirmware }: {
         </button>
       </form>
       </> : <p>No devices are available.</p>}
+      <button className="admin-message-action" type="button" disabled={saving} onClick={() => {
+        dialog.current?.close();
+        editMessage();
+      }}>{hasMessage ? "Edit dashboard message" : "Add dashboard message"}</button>
     </dialog>
   </>;
 }

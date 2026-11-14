@@ -98,6 +98,40 @@ test("SQLite telemetry API", async (t) => {
     assert.equal(await db.gpsSample.count(), 0);
   });
 
+  await t.test("authenticates dashboard writes and broadcasts the saved message and clear", async (t) => {
+    const previous = process.env.EBT_DASHBOARD_MESSAGE;
+    process.env.EBT_DASHBOARD_MESSAGE = "Configured fallback";
+    t.after(() => {
+      if (previous === undefined) delete process.env.EBT_DASHBOARD_MESSAGE;
+      else process.env.EBT_DASHBOARD_MESSAGE = previous;
+    });
+    assert.equal((await app.inject("/api/v1/devices")).json().message, "Configured fallback");
+    const write = (message: string, token?: string) => app.inject({
+      method: "PUT",
+      url: "/api/v1/dashboard-message",
+      payload: { message },
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    assert.equal((await write("Unauthorised")).statusCode, 401);
+    assert.equal((await write("x".repeat(501), adminToken)).statusCode, 400);
+
+    const socket = new WebSocket(address.replace("http:", "ws:") + "/api/v1/ws");
+    t.after(() => socket.terminate());
+    await once(socket, "open");
+    for (const [input, message, revision] of [["  Racing at noon  ", "Racing at noon", 1], ["  ", "", 2]] as const) {
+      const event = once(socket, "message", { signal: AbortSignal.timeout(2000) });
+      const response = await write(input, adminToken);
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.json(), { message, revision });
+      const [data] = await event;
+      assert.deepEqual(JSON.parse(data.toString()), { type: "dashboard-message", message, revision });
+      const roster = (await app.inject("/api/v1/devices")).json();
+      assert.equal(roster.message, message);
+      assert.equal(roster.messageRevision, revision);
+    }
+    assert.equal((await db.dashboardMessage.findUnique({ where: { id: 1 } }))?.message, "");
+  });
+
   await t.test("requires admin authorization and persists device settings", async () => {
     const update = (id: string, payload: { displayName?: string; colour?: string | null }, token = adminToken) => app.inject({
       method: "PATCH",

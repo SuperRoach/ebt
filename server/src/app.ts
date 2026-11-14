@@ -39,6 +39,42 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
   await app.register(websocket, { options: { maxPayload: 1024 } });
   app.addSchema(telemetrySchema);
 
+  const dashboardOrigin = process.env.EBT_DASHBOARD_ORIGIN;
+  if (dashboardOrigin) {
+    app.addHook("onRequest", async (request, reply) => {
+      if (!/^\/api\/v1\/(devices(?:\/|$)|dashboard-message$)/.test(request.url.split("?")[0])) return;
+      reply.header("Vary", "Origin");
+      if (request.headers.origin !== dashboardOrigin) return;
+      reply.header("Access-Control-Allow-Origin", dashboardOrigin);
+      if (request.method === "OPTIONS") {
+        reply.header("Access-Control-Allow-Methods", "GET, PATCH, PUT, OPTIONS");
+        reply.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      }
+    });
+    app.options("/api/v1/devices/:id", async (_request, reply) => reply.code(204).send());
+    app.options("/api/v1/dashboard-message", async (_request, reply) => reply.code(204).send());
+  }
+
+  function validAdmin(authorization: string | undefined) {
+    const token = authorization?.match(/^Bearer (\S+)$/i)?.[1];
+    return Boolean(token && adminToken &&
+      timingSafeEqual(Buffer.from(hashKey(token), "hex"), Buffer.from(hashKey(adminToken), "hex")));
+  }
+
+  function broadcast(event: object) {
+    const data = JSON.stringify(event);
+    for (const socket of app.websocketServer.clients) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      if (socket.bufferedAmount > 1024 * 1024) {
+        socket.terminate();
+        continue;
+      }
+      socket.send(data, (error) => {
+        if (error) socket.terminate();
+      });
+    }
+  }
+
   app.get("/health", async (request, reply) => {
     try {
       await db.$queryRaw`SELECT 1 FROM "Device" UNION ALL SELECT 1 FROM "GpsSample" LIMIT 1`;
@@ -79,7 +115,7 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     }
 
     if (result.newSamples.length) {
-      const event = JSON.stringify({
+      broadcast({
         type: "telemetry",
         receivedAt: result.receivedAt,
         ...batch,
@@ -88,16 +124,6 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
           timestamp: new Date(sample.timestamp).toISOString(),
         })),
       });
-      for (const socket of app.websocketServer.clients) {
-        if (socket.readyState !== WebSocket.OPEN) continue;
-        if (socket.bufferedAmount > 1024 * 1024) {
-          socket.terminate();
-          continue;
-        }
-        socket.send(event, (error) => {
-          if (error) socket.terminate();
-        });
-      }
     }
     const assignment = await db.firmwareAssignment.findUnique({
       where: { deviceId: batch.deviceId },
@@ -223,10 +249,38 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     });
   });
 
-  app.get("/api/v1/devices", async () => ({
-    message: process.env.EBT_DASHBOARD_MESSAGE?.trim() || undefined,
-    devices: await db.device.findMany({ select: deviceSelect, orderBy: { id: "asc" } }),
-  }));
+  app.get("/api/v1/devices", async (_request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const [devices, notice] = await Promise.all([
+      db.device.findMany({ select: deviceSelect, orderBy: { id: "asc" } }),
+      db.dashboardMessage.findUnique({ where: { id: 1 } }),
+    ]);
+    return {
+      devices,
+      message: notice ? notice.message : process.env.EBT_DASHBOARD_MESSAGE?.trim() || undefined,
+      messageRevision: notice?.revision,
+    };
+  });
+
+  app.put<{ Body: { message: string } }>("/api/v1/dashboard-message", {
+    bodyLimit: 4096,
+    schema: { body: {
+      type: "object", required: ["message"], additionalProperties: false,
+      properties: { message: { type: "string", maxLength: 500 } },
+    } },
+  }, async (request, reply) => {
+    if (!adminToken) return reply.code(503).send({ error: "Dashboard message editing is disabled on the server" });
+    if (!validAdmin(request.headers.authorization)) return reply.code(401).send({ error: "Invalid admin token" });
+    const message = request.body.message.trim();
+    const saved = await db.dashboardMessage.upsert({
+      where: { id: 1 },
+      create: { id: 1, message, revision: 1 },
+      update: { message, revision: { increment: 1 } },
+      select: { message: true, revision: true },
+    });
+    broadcast({ type: "dashboard-message", ...saved });
+    return saved;
+  });
 
   app.patch<{ Params: { id: string }; Body: { displayName?: string; colour?: string | null } }>("/api/v1/devices/:id", {
     schema: {
@@ -243,8 +297,7 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     },
   }, async (request, reply) => {
     if (!adminToken) return reply.code(503).send({ error: "Device editing is disabled on the server" });
-    const token = request.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
-    if (!token || !timingSafeEqual(Buffer.from(hashKey(token), "hex"), Buffer.from(hashKey(adminToken), "hex"))) {
+    if (!validAdmin(request.headers.authorization)) {
       return reply.code(401).send({ error: "Invalid admin token" });
     }
     const { colour } = request.body;
