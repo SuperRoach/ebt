@@ -10,6 +10,7 @@ export function useTracking() {
   const [notice, setNotice] = useState<DashboardMessage>({ message: "", revision: 0 });
   const [devices, setDevices] = useState<Device[]>([]);
   const [samples, setSamples] = useState<Record<string, StoredSample[]>>({});
+  const [lastUploads, setLastUploads] = useState<Record<string, string>>({});
   const [connection, setConnection] = useState<Connection>("connecting");
   const [streamed, setStreamed] = useState<Record<string, StoredSample>>({});
   const [loading, setLoading] = useState(true);
@@ -46,8 +47,14 @@ export function useTracking() {
       retryDelay = Math.min(retryDelay * 2, 5 * 60_000);
     }
 
-    function merge(id: string, incoming: StoredSample[]) {
-      if (lifetime.signal.aborted || !incoming.length) return;
+    function merge(id: string, incoming: StoredSample[], lastUploadAt?: string | null) {
+      if (lifetime.signal.aborted) return;
+      const latest = incoming.reduce((latest, sample) =>
+        sample.receivedAt > latest ? sample.receivedAt : latest, lastUploadAt ?? "");
+      if (latest) {
+        setLastUploads((current) => latest > (current[id] ?? "") ? { ...current, [id]: latest } : current);
+      }
+      if (!incoming.length) return;
       const capturedNow = Date.now();
       setSamples((current) => ({ ...current, [id]: mergeSamples(current[id] ?? [], incoming, capturedNow) }));
     }
@@ -70,8 +77,8 @@ export function useTracking() {
           return edited && edited !== editsAtStart.get(device.id) ? edited : device;
         }));
         const results = await Promise.allSettled(roster.map(({ id }) =>
-          history(id, signal).then(({ samples: trail }) => {
-            if (!signal.aborted) merge(id, trail);
+          history(id, signal).then(({ samples: trail, lastUploadAt }) => {
+            if (!signal.aborted) merge(id, trail, lastUploadAt);
           }),
         ));
         if (signal.aborted) return;
@@ -146,7 +153,7 @@ export function useTracking() {
   }
 
   return {
-    devices, message: notice.message, samples, connection, streamed, loading, error, retrying, now,
+    devices, message: notice.message, samples, lastUploads, connection, streamed, loading, error, retrying, now,
     saveDevice, saveMessage, retry: () => setRefreshKey((key) => key + 1),
   };
 }

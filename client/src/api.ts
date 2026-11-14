@@ -54,7 +54,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const listDevices = (signal: AbortSignal) =>
   request<{ devices: Device[]; message?: string; messageRevision?: number }>("/devices", { signal });
 export const history = (id: string, signal: AbortSignal) =>
-  request<{ samples: StoredSample[] }>(`/devices/${encodeURIComponent(id)}/history?limit=200`, { signal });
+  request<{ samples: StoredSample[]; lastUploadAt?: string | null }>(`/devices/${encodeURIComponent(id)}/history?limit=200`, { signal });
 
 export const updateDevice = (id: string, settings: DeviceSettings, token: string) =>
   request<{ device: Device }>(`/devices/${encodeURIComponent(id)}`, {

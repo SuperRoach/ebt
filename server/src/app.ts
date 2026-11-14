@@ -361,14 +361,19 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
 
     const device = await db.device.findUnique({ where: { id }, select: deviceSelect });
     if (!device) return reply.code(404).send({ error: "Unknown device" });
-    const samples = await db.gpsSample.findMany({
+    const [samples, latestUpload] = await Promise.all([db.gpsSample.findMany({
       where: { deviceId: id, timestamp: { gte: from, lte: to } },
       orderBy: sampleOrder,
       skip: offset,
       take: limit + 1,
       omit: sampleOmit,
-    });
-    return { device, samples: samples.slice(0, limit), nextOffset: samples.length > limit ? offset + limit : null };
+    }), db.gpsSample.findFirst({
+      where: { deviceId: id },
+      orderBy: { receivedAt: "desc" },
+      select: { receivedAt: true },
+    })]);
+    return { device, samples: samples.slice(0, limit), lastUploadAt: latestUpload?.receivedAt ?? null,
+      nextOffset: samples.length > limit ? offset + limit : null };
   });
 
   app.get("/api/v1/ws", { websocket: true }, (socket) => {

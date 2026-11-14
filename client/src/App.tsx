@@ -50,15 +50,32 @@ function TransportChip({ sample }: { sample: StoredSample }) {
   </span>;
 }
 
-function Telemetry({ sample, status, now }: { sample: StoredSample | undefined; status: MapCart["status"]; now: number }) {
+function ageLabel(timestamp: string, now: number) {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 1000));
+  if (seconds < 60) return `${seconds} sec ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hr ago`;
+  return `${Math.floor(seconds / 86400)} d ago`;
+}
+
+function Telemetry({ sample, capturedAt, lastUploadAt, status, now }: {
+  sample: StoredSample | undefined; capturedAt?: string; lastUploadAt?: string; status: MapCart["status"]; now: number;
+}) {
   const speed = status === "Live" && sample?.speedMps != null ? (sample.speedMps * 3.6).toFixed(1) : null;
   const batteryTooltipId = useId();
   const recordingTooltipId = useId();
   const gpsTooltipId = useId();
+  const updateTooltipId = useId();
   const recordingState = sample?.recordingState;
   const hasFix = sample?.fixValid === true;
   const batteryVoltage = sample?.batteryVoltage;
-  const ageSeconds = sample ? Math.max(0, Math.floor((now - Date.parse(sample.timestamp)) / 1000)) : Infinity;
+  const capturedLabel = capturedAt ? localTime.format(new Date(capturedAt)) : undefined;
+  const driftSeconds = lastUploadAt && capturedAt
+    ? Math.max(0, Math.floor((Date.parse(lastUploadAt) - Date.parse(capturedAt)) / 1000))
+    : undefined;
+  const updateTooltip = !capturedAt ? "No GPS capture yet"
+    : `GPS captured ${ageLabel(capturedAt, now)} · ${driftSeconds !== undefined && driftSeconds < 60
+      ? `Drift: ${driftSeconds} seconds` : capturedLabel}`;
   // Estimate charge from voltage for the tracker's single-cell lithium battery.
   const emptyVoltage = 3.3;
   const fullVoltage = 4.2;
@@ -96,21 +113,25 @@ function Telemetry({ sample, status, now }: { sample: StoredSample | undefined; 
             {hasFix && <span aria-hidden="true">{sample.satelliteCount}</span>}
             <span className="battery-tooltip" id={gpsTooltipId} role="tooltip">
               {hasFix ? `GPS fix · ${sample.satelliteCount} satellites` : sample ? "No GPS fix" : "GPS status unavailable"}
+              {capturedLabel && <><br />GPS captured {capturedLabel}</>}
             </span>
           </span>
         </dd>
       </div>
-      <div className="updated"><dt>Last update</dt><dd>{sample ?
-        <time dateTime={sample.timestamp} title={localTime.format(new Date(sample.timestamp))}>
-          {ageSeconds < 60 ? `${ageSeconds} sec ago` : localTime.format(new Date(sample.timestamp))}
-        </time> : "No data yet"}</dd></div>
+      <div className="updated" tabIndex={lastUploadAt ? 0 : undefined} aria-describedby={lastUploadAt ? updateTooltipId : undefined}>
+        <dt>Last update</dt>
+        <dd>{lastUploadAt ? <>
+          <time dateTime={lastUploadAt}>{ageLabel(lastUploadAt, now)}</time>
+          <span className="battery-tooltip" id={updateTooltipId} role="tooltip">{updateTooltip}</span>
+        </> : "No data yet"}</dd>
+      </div>
     </dl>
   </>;
 }
 
 export function App() {
   const trailTooltipId = useId();
-  const { devices, message, samples, connection, streamed, loading, error, retrying, now, saveDevice, saveMessage, retry } = useTracking();
+  const { devices, message, samples, lastUploads, connection, streamed, loading, error, retrying, now, saveDevice, saveMessage, retry } = useTracking();
   const [adminToken, setAdminToken] = useState("");
   const [hidden, setHidden] = useState<string[]>([]);
   const [followId, setFollowId] = useState("");
@@ -124,7 +145,7 @@ export function App() {
     const fix = lastPositionSample(recent, now);
     const historical = Boolean(fix && status !== "Live");
     return {
-      device, sample, status, historical, number: index + 1,
+      device, sample, capturedAt: fix?.timestamp, status, historical, number: index + 1,
       colour: device.colour ?? (historical ? "#606b75" : colours[index % colours.length]),
       liveSequence: status === "Live" ? sample?.sequence : undefined,
       demo: Boolean(sample && isDemo(sample)),
@@ -226,7 +247,7 @@ export function App() {
           {loading && !carts.length && <p className="empty" role="status">Loading devices…</p>}
           {!loading && !carts.length && !error && <p className="empty">No tracking devices are registered.</p>}
           {!loading && !carts.length && error && <p className="empty">Device list unavailable.</p>}
-          {carts.map(({ device, colour, number, demo: simulated, status, sample, liveSequence }) =>
+          {carts.map(({ device, colour, number, demo: simulated, status, sample, capturedAt, liveSequence }) =>
             <article className="cart-card" key={device.id} style={{ "--cart-colour": colour } as CSSProperties}>
               <div className="cart-heading">
                 <span className="cart-number" aria-hidden="true">{number}</span>
@@ -244,7 +265,7 @@ export function App() {
                 </div>
               </div>
               {simulated && <p className="demo-tag">Demo telemetry</p>}
-              <Telemetry sample={sample} status={status} now={now} />
+              <Telemetry sample={sample} capturedAt={capturedAt} lastUploadAt={lastUploads[device.id]} status={status} now={now} />
               <label className="visibility">
                 <input type="checkbox" checked={!hidden.includes(device.id)} onChange={(event) => {
                   const show = event.target.checked;
