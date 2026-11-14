@@ -14,6 +14,7 @@ export function useTracking() {
   const [streamed, setStreamed] = useState<Record<string, StoredSample>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [retrying, setRetrying] = useState(false);
   const [now, setNow] = useState(Date.now);
   const [refreshKey, setRefreshKey] = useState(0);
   const editedDevices = useRef(new Map<string, Device>());
@@ -32,7 +33,18 @@ export function useTracking() {
     let active: AbortController | undefined;
     let connected = false;
     let needsRetry = true;
+    let retryTimer: number | undefined;
+    let retryDelay = 10_000;
     const lifetime = new AbortController();
+
+    function scheduleRetry() {
+      window.clearTimeout(retryTimer);
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void refresh();
+      }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 5 * 60_000);
+    }
 
     function merge(id: string, incoming: StoredSample[]) {
       if (lifetime.signal.aborted || !incoming.length) return;
@@ -41,9 +53,12 @@ export function useTracking() {
     }
 
     async function refresh() {
+      window.clearTimeout(retryTimer);
+      retryTimer = undefined;
       active?.abort();
       const controller = new AbortController();
       active = controller;
+      setRetrying(true);
       const { signal } = controller;
       const editsAtStart = new Map(editedDevices.current);
       try {
@@ -62,12 +77,18 @@ export function useTracking() {
         if (signal.aborted) return;
         needsRetry = results.some(({ status }) => status === "rejected");
         setError(needsRetry ? "Some cart data could not be loaded. Retrying…" : "");
+        if (needsRetry) scheduleRetry();
+        else retryDelay = 10_000;
       } catch {
         if (signal.aborted) return;
         needsRetry = true;
         setError("The tracking server could not be reached. Retrying…");
+        scheduleRetry();
       } finally {
-        if (!signal.aborted) setLoading(false);
+        if (!signal.aborted) {
+          setLoading(false);
+          if (active === controller) setRetrying(false);
+        }
       }
     }
 
@@ -96,9 +117,9 @@ export function useTracking() {
     });
     void refresh();
     const poll = window.setInterval(() => {
-      if (!connected || needsRetry) {
+      if (!connected && !needsRetry) {
         void refresh();
-      } else {
+      } else if (connected && !needsRetry) {
         // Recover a missed message event without reloading cart history.
         void listDevices(lifetime.signal).then(({ message, messageRevision }) => {
           if (!lifetime.signal.aborted) receiveMessage({ message: message ?? "", revision: messageRevision ?? 0 });
@@ -110,6 +131,7 @@ export function useTracking() {
       active?.abort();
       disconnect();
       window.clearInterval(poll);
+      window.clearTimeout(retryTimer);
     };
   }, [refreshKey]);
 
@@ -124,7 +146,7 @@ export function useTracking() {
   }
 
   return {
-    devices, message: notice.message, samples, connection, streamed, loading, error, now,
+    devices, message: notice.message, samples, connection, streamed, loading, error, retrying, now,
     saveDevice, saveMessage, retry: () => setRefreshKey((key) => key + 1),
   };
 }

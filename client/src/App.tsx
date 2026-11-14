@@ -110,7 +110,7 @@ function Telemetry({ sample, status, now }: { sample: StoredSample | undefined; 
 
 export function App() {
   const trailTooltipId = useId();
-  const { devices, message, samples, connection, streamed, loading, error, now, saveDevice, saveMessage, retry } = useTracking();
+  const { devices, message, samples, connection, streamed, loading, error, retrying, now, saveDevice, saveMessage, retry } = useTracking();
   const [adminToken, setAdminToken] = useState("");
   const [hidden, setHidden] = useState<string[]>([]);
   const [followId, setFollowId] = useState("");
@@ -186,7 +186,10 @@ export function App() {
         </div>
       </div>
 
-      {error && <div className="notice" role="status"><span>{error}</span><button type="button" onClick={retry}>Retry now</button></div>}
+      {error && <div className="notice" role="status">
+        {retrying && <span className="retry-spinner" aria-hidden="true" />}
+        <span>{error}</span><button type="button" onClick={retry}>Retry now</button>
+      </div>}
       {connection === "reconnecting" && !error &&
         <div className="notice" role="status">Live feed interrupted. Showing last known positions while reconnecting.</div>}
 
