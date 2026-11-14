@@ -4,6 +4,7 @@ import { connectTelemetry, type Connection } from "./telemetrySocket.js";
 import { fromEvent, mergeSamples } from "./tracking.js";
 
 export function useTracking() {
+  const [message, setMessage] = useState("");
   const [devices, setDevices] = useState<Device[]>([]);
   const [samples, setSamples] = useState<Record<string, StoredSample[]>>({});
   const [connection, setConnection] = useState<Connection>("connecting");
@@ -39,8 +40,9 @@ export function useTracking() {
       const { signal } = controller;
       const editsAtStart = new Map(editedDevices.current);
       try {
-        const { devices: roster } = await listDevices(signal);
+        const { devices: roster, message } = await listDevices(signal);
         if (signal.aborted) return;
+        setMessage(message ?? "");
         setDevices(roster.map((device) => {
           const edited = editedDevices.current.get(device.id);
           return edited && edited !== editsAtStart.get(device.id) ? edited : device;
@@ -102,5 +104,5 @@ export function useTracking() {
     setDevices((current) => current.map((entry) => entry.id === id ? device : entry));
   }
 
-  return { devices, samples, connection, streamed, loading, error, now, saveDevice, retry: () => setRefreshKey((key) => key + 1) };
+  return { devices, message, samples, connection, streamed, loading, error, now, saveDevice, retry: () => setRefreshKey((key) => key + 1) };
 }

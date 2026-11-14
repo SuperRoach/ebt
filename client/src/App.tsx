@@ -10,10 +10,30 @@ const localTime = new Intl.DateTimeFormat("en-AU", {
   timeZone: "Australia/Melbourne", dateStyle: "medium", timeStyle: "medium",
 });
 
-function Telemetry({ sample, status }: { sample: StoredSample | undefined; status: MapCart["status"] }) {
+function StatusDot({ pulseKey }: { pulseKey?: string }) {
+  return <span className="status-dot" aria-hidden="true">
+    {pulseKey !== undefined && <span key={pulseKey} className="status-pulse" />}
+  </span>;
+}
+
+function TransportChip({ transport }: { transport: StoredSample["transport"] }) {
+  const tooltipId = useId();
+  const label = transport === "wifi" ? "Wi-Fi" : "4G cellular";
+  return <span className="transport-chip" tabIndex={0} aria-describedby={tooltipId}>
+    <span className={`transport-icon ${transport === "wifi" ? "wifi-icon" : "cellular-icon"}`} aria-hidden="true" />
+    <span className="battery-tooltip" id={tooltipId} role="tooltip">{label}</span>
+  </span>;
+}
+
+function Telemetry({ sample, status, now }: { sample: StoredSample | undefined; status: MapCart["status"]; now: number }) {
   const speed = status === "Live" && sample?.speedMps != null ? (sample.speedMps * 3.6).toFixed(1) : null;
   const batteryTooltipId = useId();
+  const recordingTooltipId = useId();
+  const gpsTooltipId = useId();
+  const recordingState = sample?.recordingState;
+  const hasFix = sample?.fixValid === true;
   const batteryVoltage = sample?.batteryVoltage;
+  const ageSeconds = sample ? Math.max(0, Math.floor((now - Date.parse(sample.timestamp)) / 1000)) : Infinity;
   // Estimate charge from voltage for the tracker's single-cell lithium battery.
   const emptyVoltage = 3.3;
   const fullVoltage = 4.2;
@@ -21,31 +41,50 @@ function Telemetry({ sample, status }: { sample: StoredSample | undefined; statu
     Math.round(Math.min(1, Math.max(0, (batteryVoltage - emptyVoltage) / (fullVoltage - emptyVoltage))) * 100);
   return <>
     <dl className="cart-readings">
-      <div><dt>Speed</dt><dd className="speed">{speed ?? "—"} <span>km/h</span></dd></div>
-      <div className="battery-metric"><dt>Battery</dt><dd className="battery-value">{batteryPercent != null && batteryVoltage != null ?
+      <div><dt className="sr-only">Speed</dt><dd className="speed">{speed ?? "—"} <span>km/h</span></dd></div>
+      <div className="battery-metric"><dt className="sr-only">Battery</dt><dd className="battery-value">
+        <span className="battery-icon" aria-hidden="true">
+          {batteryPercent != null && <span className="battery-fill" style={{ width: `${batteryPercent}%` }} />}
+        </span>{batteryPercent != null && batteryVoltage != null ?
         <span className="battery-reading" tabIndex={0} aria-describedby={batteryTooltipId}>
           {batteryPercent}%
-          <span className="battery-meter" aria-hidden="true">
-            <span style={{ width: `${batteryPercent}%` }} />
-          </span>
           <span className="battery-tooltip" id={batteryTooltipId} role="tooltip">
             Estimated charge · {batteryVoltage.toFixed(2)} V
           </span>
         </span> : "—"}</dd></div>
     </dl>
     <dl className="metrics">
-      <div><dt>Recording</dt><dd className="capitalize">{sample?.recordingState ?? "—"}</dd></div>
-      <div><dt>GPS fix</dt><dd>{sample ? (sample.fixValid ? "Valid" : "No fix") : "—"}</dd></div>
-      <div><dt>Satellites</dt><dd>{sample?.satelliteCount ?? "—"}</dd></div>
-      <div><dt>Transport</dt><dd>{sample ? (sample.transport === "wifi" ? "Wi-Fi" : "4G") : "—"}</dd></div>
-      <div className="updated"><dt>Last update (Vic)</dt><dd>{sample ?
-        <time dateTime={sample.timestamp}>{localTime.format(new Date(sample.timestamp))}</time> : "No data yet"}</dd></div>
+      <div className="telemetry-chips">
+        <dt className="sr-only">Recording</dt>
+        <dd>
+          <span className="telemetry-chip recording-chip" data-recording={recordingState === "recording"} tabIndex={0} aria-describedby={recordingTooltipId}>
+            <span className="recording-icon" aria-hidden="true" />
+            <span className="battery-tooltip" id={recordingTooltipId} role="tooltip">
+              {recordingState ? `Recording: ${recordingState}` : "Recording status unavailable"}
+            </span>
+          </span>
+        </dd>
+        <dt className="sr-only">GPS fix</dt>
+        <dd>
+          <span className="telemetry-chip gps-chip" data-fix={hasFix} tabIndex={0} aria-describedby={gpsTooltipId}>
+            <span className="satellite-icon" aria-hidden="true" />
+            {hasFix && <span aria-hidden="true">{sample.satelliteCount}</span>}
+            <span className="battery-tooltip" id={gpsTooltipId} role="tooltip">
+              {hasFix ? `GPS fix · ${sample.satelliteCount} satellites` : sample ? "No GPS fix" : "GPS status unavailable"}
+            </span>
+          </span>
+        </dd>
+      </div>
+      <div className="updated"><dt>Last update</dt><dd>{sample ?
+        <time dateTime={sample.timestamp} title={localTime.format(new Date(sample.timestamp))}>
+          {ageSeconds < 60 ? `${ageSeconds} sec ago` : localTime.format(new Date(sample.timestamp))}
+        </time> : "No data yet"}</dd></div>
     </dl>
   </>;
 }
 
 export function App() {
-  const { devices, samples, connection, streamed, loading, error, now, saveDevice, retry } = useTracking();
+  const { devices, message, samples, connection, streamed, loading, error, now, saveDevice, retry } = useTracking();
   const [hidden, setHidden] = useState<string[]>([]);
   const [followId, setFollowId] = useState("");
   const [fitRequest, setFitRequest] = useState(0);
@@ -70,8 +109,12 @@ export function App() {
   const visible = carts.filter(({ device }) => !hidden.includes(device.id));
   const onMap = visible.filter(({ point }) => point).length;
   const historicalOnMap = visible.filter((cart) => cart.historical).length;
+  const liveCount = carts.filter(({ status }) => status === "Live").length;
   const demo = carts.some((cart) => cart.demo || cart.positionDemo);
   const connectionText = { connecting: "Connecting", connected: "Feed connected", reconnecting: "Reconnecting" }[connection];
+  const feedPulseKey = connection === "connected"
+    ? JSON.stringify(carts.map(({ device }) => streamed[device.id]?.sequence))
+    : undefined;
 
   return <>
     <header className="masthead">
@@ -81,20 +124,28 @@ export function App() {
           <p>Lucas Primary School</p>
           <h1>Energy Breakthrough</h1>
         </div>
+        {demo && <details className="demo-notice">
+          <summary><span>Demo</span><span className="sr-only"> mode</span></summary>
+          <p className="demo-popover">Positions marked Demo are generated by the simulator.</p>
+        </details>}
         <Admin devices={devices} defaultColours={colours} saveDevice={saveDevice} />
       </div>
     </header>
     <main>
       <div className="page-heading">
-        <div>
+        <div className="dashboard-title">
           <h2>Cart tracking</h2>
-          <p><span className="location-pin" aria-hidden="true" />Princes Park · Maryborough, Victoria</p>
+          {message && <p className="dashboard-message">{message}</p>}
         </div>
-        <span role="status" className={`connection ${connection}`}>{connectionText}</span>
+        <div className="dashboard-status">
+          {carts.length > 0 && <span className="fleet-count"><strong>{liveCount}/{carts.length}</strong> reporting live</span>}
+          <span role="status" className={`connection ${connection}`}>
+            <StatusDot pulseKey={feedPulseKey} />
+            {connectionText}
+          </span>
+        </div>
       </div>
 
-      {demo && <div className="demo-banner" role="status"><strong>Simulator / demo mode</strong>
-        <span>Positions marked Demo are generated by the simulator.</span></div>}
       {error && <div className="notice" role="status"><span>{error}</span><button type="button" onClick={retry}>Retry now</button></div>}
       {connection === "reconnecting" && !error &&
         <div className="notice" role="status">Live feed interrupted. Showing last known positions while reconnecting.</div>}
@@ -129,7 +180,7 @@ export function App() {
           {loading && !carts.length && <p className="empty" role="status">Loading devices…</p>}
           {!loading && !carts.length && !error && <p className="empty">No tracking devices are registered.</p>}
           {!loading && !carts.length && error && <p className="empty">Device list unavailable.</p>}
-          {carts.map(({ device, colour, number, demo: simulated, status, sample }) =>
+          {carts.map(({ device, colour, number, demo: simulated, status, sample, liveSequence }) =>
             <article className="cart-card" key={device.id} style={{ "--cart-colour": colour } as CSSProperties}>
               <div className="cart-heading">
                 <span className="cart-number" aria-hidden="true">{number}</span>
@@ -137,10 +188,15 @@ export function App() {
                   <h3>{device.displayName}</h3>
                   <p>{device.id}</p>
                 </div>
-                <span className={`cart-status ${status.toLowerCase().replaceAll(" ", "-")}`}>{status}</span>
+                <div className="cart-chips">
+                  <span className={`cart-status ${status.toLowerCase().replaceAll(" ", "-")}`}>
+                    <StatusDot pulseKey={liveSequence} />{status}
+                  </span>
+                  {sample && <TransportChip transport={sample.transport} />}
+                </div>
               </div>
               {simulated && <p className="demo-tag">Demo telemetry</p>}
-              <Telemetry sample={sample} status={status} />
+              <Telemetry sample={sample} status={status} now={now} />
               <label className="visibility">
                 <input type="checkbox" checked={!hidden.includes(device.id)} onChange={(event) => {
                   const show = event.target.checked;

@@ -96,6 +96,7 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
   });
 
   app.get("/api/v1/devices", async () => ({
+    message: process.env.EBT_DASHBOARD_MESSAGE?.trim() || undefined,
     devices: await db.device.findMany({ select: deviceSelect, orderBy: { id: "asc" } }),
   }));
 

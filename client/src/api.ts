@@ -42,7 +42,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export const listDevices = (signal: AbortSignal) => request<{ devices: Device[] }>("", { signal });
+export const listDevices = (signal: AbortSignal) => request<{ devices: Device[]; message?: string }>("", { signal });
 export const history = (id: string, signal: AbortSignal) =>
   request<{ samples: StoredSample[] }>(`/${encodeURIComponent(id)}/history?limit=200`, { signal });
 
