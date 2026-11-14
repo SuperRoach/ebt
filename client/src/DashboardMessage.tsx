@@ -145,10 +145,14 @@ export function DashboardMessage({ message, adminToken, saveMessage }: {
           <textarea ref={textarea} value={draft} maxLength={500} rows={4} disabled={saving}
             onChange={(event) => setDraft(event.target.value)} placeholder="Leave blank to clear" />
         </label>
+        <button type="button" disabled={saving || !draft} onClick={() => {
+          setDraft("");
+          textarea.current?.focus();
+        }}>Clear message</button>
         <AdminTokenField token={token} setToken={setToken} disabled={saving} />
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="primary-button" type="submit" disabled={saving || !token.trim()}>
-          {saving ? "Saving…" : draft.trim() ? "Publish message" : "Clear message"}
+          {saving ? "Saving…" : draft.trim() ? "Publish message" : "Remove dashboard message"}
         </button>
       </form> : <>
         <p className="message-full">{message || "The message has been cleared."}</p>

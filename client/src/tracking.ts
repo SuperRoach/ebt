@@ -1,6 +1,6 @@
 import type { StoredSample, TelemetryEvent } from "./api.js";
 
-export const LIVE_MS = 30_000;
+export const LIVE_MS = 35_000;
 export const OFFLINE_MS = 90_000;
 export const TRAIL_MS = 5 * 60_000;
 const FUTURE_TOLERANCE_MS = 5_000;
