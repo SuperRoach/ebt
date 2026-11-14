@@ -11,6 +11,9 @@ const colours = ["#1551b0", "#9c360d", "#5b3b9c", "#126d5d"];
 const localTime = new Intl.DateTimeFormat("en-AU", {
   timeZone: "Australia/Melbourne", dateStyle: "medium", timeStyle: "medium",
 });
+const localDay = new Intl.DateTimeFormat("en-AU", {
+  timeZone: "Australia/Melbourne", year: "numeric", month: "2-digit", day: "2-digit",
+});
 
 function StatusDot({ pulseKey }: { pulseKey?: string }) {
   return <span className="status-dot" aria-hidden="true">
@@ -143,8 +146,10 @@ export function App() {
   const carts = devices.map((device, index) => {
     const recent = samples[device.id] ?? [];
     const sample = recent[0];
+    const today = localDay.format(new Date(now));
     const maxSpeedMps = recent.reduce<number | null>((maximum, candidate) => {
-      if (candidate.recordingSessionId !== sample?.recordingSessionId || candidate.speedMps === null) return maximum;
+      if (candidate.recordingSessionId !== sample?.recordingSessionId || candidate.speedMps === null
+        || localDay.format(new Date(candidate.timestamp)) !== today) return maximum;
       return maximum === null ? candidate.speedMps : Math.max(maximum, candidate.speedMps);
     }, null);
     const liveSample = connection === "connected" && sample?.sequence === streamed[device.id]?.sequence;
