@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { AdminTokenField } from "./AdminTokenField.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -8,7 +8,7 @@ const announcementDuration = 10_000;
 function MessagePreview({ message, animate }: { message: string; animate: boolean }) {
   const [length, setLength] = useState<number>();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!animate) {
       setLength(undefined);
       return;
@@ -23,10 +23,8 @@ function MessagePreview({ message, animate }: { message: string; animate: boolea
       window.clearTimeout(startTimer);
       setLength(undefined);
     }
-    function animate() {
-      finish();
-      if (motion.matches || document.hidden) return;
-      const segments = [...segmenter.segment(message)].slice(0, 72);
+    function startTyping() {
+      const segments = [...segmenter.segment(message)];
       const duration = Math.min(850, segments.length * 28);
       const started = performance.now();
       function type(now: number) {
@@ -42,7 +40,8 @@ function MessagePreview({ message, animate }: { message: string; animate: boolea
       frame = requestAnimationFrame(type);
       deadline = window.setTimeout(finish, duration + 100);
     }
-    startTimer = window.setTimeout(animate, slideDuration);
+    setLength(0);
+    startTimer = window.setTimeout(startTyping, slideDuration);
     motion.addEventListener("change", finish);
     document.addEventListener("visibilitychange", finish);
     return () => {
@@ -55,8 +54,8 @@ function MessagePreview({ message, animate }: { message: string; animate: boolea
   }, [message, animate]);
 
   return <>
-    <span className="message-preview-text" aria-hidden="true" data-typing={length !== undefined}>
-      {length === undefined ? message : message.slice(0, length)}
+    <span className="message-preview-text" aria-hidden="true" data-typing={animate && length !== undefined}>
+      {!animate || length === undefined ? message : message.slice(0, length)}
     </span>
     <span className="sr-only">Read dashboard message. {message}</span>
   </>;
@@ -77,7 +76,7 @@ export function DashboardMessage({ message, adminToken, saveMessage }: {
   const [announcement, setAnnouncement] = useState<string>();
   const announcing = Boolean(message && announcement === message);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (!message || motion.matches || document.hidden) {
       setAnnouncement(undefined);

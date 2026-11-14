@@ -292,8 +292,6 @@ select, input:not([type="checkbox"]) {
 }
 .header-message[data-announcing="true"] .message-preview-text {
   font-size: clamp(1.35rem, 2.8vw, 2.15rem);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   animation: message-pulse 850ms ease-out 350ms both;
 }
 .message-preview-text[data-typing="true"]::after {
@@ -321,10 +319,9 @@ select, input:not([type="checkbox"]) {
 }
 .admin-message-action { margin-top: 0.85rem; }
 @keyframes message-pulse {
-  0% { opacity: 0; text-shadow: 0 0 0 transparent; }
-  12% { opacity: 1; }
+  0% { text-shadow: 0 0 0 transparent; }
   40% { text-shadow: 0 0 0.45rem #197b9d77; }
-  100% { opacity: 1; text-shadow: 0 0 0 transparent; }
+  100% { text-shadow: 0 0 0 transparent; }
 }
 @keyframes message-open {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }
