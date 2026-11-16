@@ -39,14 +39,15 @@ model GpsSample {
   cellularRsrpDbm    Float?
   cellularRsrqDb     Float?
   cellularSinrDb     Float?
-  batteryVoltage     Float
+  batteryVoltage     Float?
   latitude           Float?
   longitude          Float?
   speedMps           Float?
   headingDeg         Float?
   fixValid           Boolean
-  satelliteCount     Int
+  satelliteCount     Int?
   hdop               Float?
+  gpsStatusReason    String?
 
   @@id([deviceId, sequence])
   @@index([deviceId, timestamp, sequence])

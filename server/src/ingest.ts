@@ -15,10 +15,13 @@ export async function ingest(db: PrismaClient, batch: TelemetryBatch) {
     const { sequence, latitude, longitude, speedMps, headingDeg, fixValid, satelliteCount } = sample;
     const timestamp = new Date(sample.timestamp).toISOString();
     const hdop = sample.hdop ?? null;
+    const gpsStatusReason = sample.gpsStatusReason ?? null;
     // Transport can change when an offline batch is retried over another link.
     const captureHash = hashKey(JSON.stringify([
       version, firmwareVersion, recordingSessionId, recordingState, batteryVoltage,
       timestamp, latitude, longitude, speedMps, headingDeg, fixValid, satelliteCount, hdop,
+      // Preserve the hash of captures created before GPS status reasons were added.
+      ...(gpsStatusReason === null ? [] : [gpsStatusReason]),
     ]));
     return {
       sequence,
@@ -28,7 +31,7 @@ export async function ingest(db: PrismaClient, batch: TelemetryBatch) {
         ${firmwareVersion}, ${recordingSessionId}, ${recordingState}, ${transport}, ${batteryVoltage},
         ${cellularSignal?.rssiDbm ?? null}, ${cellularSignal?.rsrpDbm ?? null},
         ${cellularSignal?.rsrqDb ?? null}, ${cellularSignal?.sinrDb ?? null},
-        ${latitude}, ${longitude}, ${speedMps}, ${headingDeg}, ${fixValid}, ${satelliteCount}, ${hdop}
+        ${latitude}, ${longitude}, ${speedMps}, ${headingDeg}, ${fixValid}, ${satelliteCount}, ${hdop}, ${gpsStatusReason}
       )`,
     };
   });
@@ -41,7 +44,7 @@ export async function ingest(db: PrismaClient, batch: TelemetryBatch) {
         "deviceId", "sequence", "captureHash", "timestamp", "receivedAt", "protocolVersion",
         "firmwareVersion", "recordingSessionId", "recordingState", "transport", "batteryVoltage",
         "cellularRssiDbm", "cellularRsrpDbm", "cellularRsrqDb", "cellularSinrDb",
-        "latitude", "longitude", "speedMps", "headingDeg", "fixValid", "satelliteCount", "hdop"
+        "latitude", "longitude", "speedMps", "headingDeg", "fixValid", "satelliteCount", "hdop", "gpsStatusReason"
       ) VALUES ${Prisma.join(captures.map(({ row }) => row))}
       ON CONFLICT ("deviceId", "sequence") DO NOTHING
       RETURNING "sequence"

@@ -124,10 +124,15 @@ test("SQLite telemetry API", async (t) => {
       { ...batch, version: 2 },
       { ...batch, extra: true },
       { ...batch, batteryVoltage: "4.05" },
+      { ...batch, batteryVoltage: -1 },
       { ...batch, samples: [] },
       { ...batch, samples: [sample(1), sample(1)] },
       { ...batch, samples: [{ ...sample(1), latitude: 91 }] },
       { ...batch, samples: [{ ...sample(1), latitude: null }] },
+      { ...batch, samples: [{ ...sample(1), speedMps: -1 }] },
+      { ...batch, samples: [{ ...sample(1), headingDeg: 360 }] },
+      { ...batch, samples: [{ ...sample(1), satelliteCount: 256 }] },
+      { ...batch, samples: [{ ...sample(1), gpsStatusReason: "no-fix" }] },
       { ...batch, samples: [sample(1, "2026-02-30T06:00:00Z")] },
       { ...batch, samples: [sample(1, "2026-11-13T17:00:00+11:00")] },
     ]) {
@@ -278,6 +283,53 @@ test("SQLite telemetry API", async (t) => {
       assert.deepEqual(events.map(({ samples }) => samples), [[sample(4)]]);
     } finally {
       socket.terminate();
+    }
+  });
+
+  await t.test("stores and broadcasts valid fixes with unavailable GPS metadata or battery voltage", async () => {
+    const fixes = [
+      { ...sample(80), speedMps: null },
+      { ...sample(81), headingDeg: null },
+      { ...sample(82, "2026-11-13T06:00:50.000Z"), speedMps: null, headingDeg: null, satelliteCount: null },
+    ];
+    const socket = new WebSocket(address.replace("http:", "ws:") + "/api/v1/ws");
+    try {
+      await once(socket, "open", { signal: AbortSignal.timeout(3000) });
+      const next = once(socket, "message", { signal: AbortSignal.timeout(3000) });
+      const response = await post({ ...batch, batteryVoltage: null, samples: fixes });
+      assert.equal(response.statusCode, 200, response.body);
+      const [data] = await next;
+      const event: TelemetryBatch = JSON.parse(data.toString());
+      assert.deepEqual(event.samples, fixes);
+      assert.equal(event.batteryVoltage, null);
+      const latest = (await app.inject("/api/v1/devices/lps-ebt-01/latest")).json().sample;
+      assert.equal(latest.fixValid, true);
+      assert.equal(latest.speedMps, null);
+      assert.equal(latest.headingDeg, null);
+      assert.equal(latest.satelliteCount, null);
+      assert.equal(latest.batteryVoltage, null);
+    } finally {
+      socket.terminate();
+    }
+  });
+
+  await t.test("stores a GPS status reason and treats it as part of the capture", async () => {
+    const status: GpsSample = {
+      ...sample(90, "2026-11-13T06:01:00.000Z"),
+      fixValid: false, satelliteCount: 0, latitude: null, longitude: null,
+      speedMps: null, headingDeg: null, gpsStatusReason: "invalid-gps-time",
+    };
+    const report = { ...batch, samples: [status] };
+    assert.equal((await post(report)).statusCode, 200);
+    const latest = await app.inject("/api/v1/devices/lps-ebt-01/latest");
+    assert.equal(latest.json().sample.gpsStatusReason, status.gpsStatusReason);
+    const retry = await post({ ...report, transport: "4g" });
+    assert.equal(retry.json<TelemetryAck>().accepted[0].status, "duplicate");
+    assert.equal((await post({ ...report, samples: [{ ...status, gpsStatusReason: "no-fix" }] })).statusCode, 409);
+    for (const [index, gpsStatusReason] of ["invalid-latitude", "invalid-longitude", "invalid-position"].entries()) {
+      const other = { ...status, sequence: sample(91 + index).sequence, gpsStatusReason };
+      const response = await post({ ...batch, samples: [other] });
+      assert.equal(response.statusCode, 200, response.body);
     }
   });
 });

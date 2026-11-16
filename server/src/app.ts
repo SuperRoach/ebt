@@ -120,6 +120,9 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     }
 
     if (result.newSamples.length) {
+      for (const { gpsStatusReason } of result.newSamples) {
+        if (gpsStatusReason) request.log.info({ deviceId: batch.deviceId, gpsStatusReason, transport: batch.transport }, "Tracker reported no fresh GPS fix");
+      }
       broadcast({
         type: "telemetry",
         receivedAt: result.receivedAt,

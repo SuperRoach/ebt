@@ -23,7 +23,7 @@
       },
       "minProperties": 1
     },
-    "batteryVoltage": {"type": "number", "minimum": 0, "maximum": 30},
+    "batteryVoltage": {"type": ["number", "null"], "minimum": 0, "maximum": 30},
     "samples": {
       "type": "array",
       "minItems": 1,
@@ -50,16 +50,22 @@
         "speedMps": {"type": ["number", "null"], "minimum": 0},
         "headingDeg": {"type": ["number", "null"], "minimum": 0, "exclusiveMaximum": 360},
         "fixValid": {"type": "boolean"},
-        "satelliteCount": {"type": "integer", "minimum": 0, "maximum": 255},
-        "hdop": {"type": "number", "minimum": 0}
+        "satelliteCount": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+        "hdop": {"type": "number", "minimum": 0},
+        "gpsStatusReason": {
+          "enum": [
+            "modem-no-response", "no-fix", "incomplete-response",
+            "invalid-position", "invalid-latitude", "invalid-longitude", "invalid-gps-time",
+            "repeated-timestamp", "motion-unavailable", "satellite-count-unavailable", "battery-unavailable"
+          ]
+        }
       },
       "if": {"properties": {"fixValid": {"const": true}}},
       "then": {
         "properties": {
           "latitude": {"type": "number"},
           "longitude": {"type": "number"},
-          "speedMps": {"type": "number"},
-          "headingDeg": {"type": "number"}
+          "gpsStatusReason": false
         }
       }
     }

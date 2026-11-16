@@ -19,7 +19,8 @@ namespace {
 constexpr int modemRx = 17;
 constexpr int modemTx = 18;
 constexpr unsigned long baud = 115200;
-constexpr unsigned long pollInterval = 5000;
+constexpr unsigned long pollInterval = 2000;
+constexpr unsigned long gpsLossInterval = 15000;
 HardwareSerial modem(1);
 
 bool modemReply(const char *prefix, String &data, unsigned long timeout,
@@ -160,7 +161,8 @@ JsonObject beginSample(JsonDocument &batch, const char *timestamp, double batter
   batch["recordingSessionId"] = sessionId;
   batch["recordingState"] = "recording";
   batch["transport"] = "wifi";
-  batch["batteryVoltage"] = battery;
+  if (isfinite(battery) && battery >= 0 && battery <= 30) batch["batteryVoltage"] = battery;
+  else batch["batteryVoltage"] = nullptr;
   auto sample = batch["samples"].to<JsonArray>().add<JsonObject>();
   sample["sequence"] = sequence;
   sample["timestamp"] = timestamp;
@@ -169,6 +171,33 @@ JsonObject beginSample(JsonDocument &batch, const char *timestamp, double batter
 
 bool clockReady() {
   return time(nullptr) >= 1735689600;  // Reject the unset clock at startup.
+}
+
+bool inferGpsTimestamp(const String &gpsTime, char (&timestamp)[21]) {
+  if (!clockReady() || gpsTime.length() < 6) return false;
+  for (int i = 0; i < 6; ++i) {
+    if (!isDigit(gpsTime[i])) return false;
+  }
+  if (gpsTime.length() > 6) {
+    if (gpsTime[6] != '.' || gpsTime.length() == 7) return false;
+    for (unsigned int i = 7; i < gpsTime.length(); ++i) {
+      if (!isDigit(gpsTime[i])) return false;
+    }
+  }
+  const int hour = (gpsTime[0] - '0') * 10 + gpsTime[1] - '0';
+  const int minute = (gpsTime[2] - '0') * 10 + gpsTime[3] - '0';
+  const int second = (gpsTime[4] - '0') * 10 + gpsTime[5] - '0';
+  if (hour > 23 || minute > 59 || second > 59) return false;
+
+  constexpr time_t secondsPerDay = 86400;
+  const time_t now = time(nullptr);
+  time_t candidate = now - now % secondsPerDay + hour * 3600 + minute * 60 + second;
+  // Choose the closest UTC date across midnight before checking freshness.
+  if (candidate - now > secondsPerDay / 2) candidate -= secondsPerDay;
+  if (now - candidate > secondsPerDay / 2) candidate += secondsPerDay;
+  if (now - candidate > 30 || candidate - now > 2) return false;
+  tm utc{};
+  return gmtime_r(&candidate, &utc) && strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc) == 20;
 }
 
 void syncModemTime() {
@@ -191,59 +220,67 @@ void syncModemTime() {
   settimeofday(&now, nullptr);
 }
 
-void capture() {
+const char *capture() {
   String response;
   String gps[9];
-  if (!command("AT+CGPSINFO", "+CGPSINFO:", response, 10000) ||
-      !splitFields(response, gps, 9) || gps[0].isEmpty()) {
-    Serial.println("Waiting for GPS fix");
-    return;
+  if (!command("AT+CGPSINFO", "+CGPSINFO:", response, 10000)) {
+    return "modem-no-response";
+  }
+  if (response.isEmpty() || response.startsWith(",")) {
+    return "no-fix";
+  }
+  if (!splitFields(response, gps, 9)) {
+    return "incomplete-response";
   }
 
   char timestamp[21];
   double latitude, longitude, knots, heading;
-  if (!coordinate(gps[0], gps[1], 'N', 'S', 90, latitude) ||
-      !coordinate(gps[2], gps[3], 'E', 'W', 180, longitude) ||
-      !utcTimestamp(gps[4], gps[5], timestamp) ||
-      !number(gps[7], knots) || knots < 0 || !number(gps[8], heading) || heading < 0 || heading > 360) {
-    Serial.println("Waiting for complete GPS data");
-    return;
+  if (!coordinate(gps[0], gps[1], 'N', 'S', 90, latitude)) return "invalid-latitude";
+  if (!coordinate(gps[2], gps[3], 'E', 'W', 180, longitude)) return "invalid-longitude";
+  const bool inferredDate = gps[4].isEmpty();
+  if (!(inferredDate ? inferGpsTimestamp(gps[5], timestamp) : utcTimestamp(gps[4], gps[5], timestamp))) {
+    return "invalid-gps-time";
   }
-  if (lastTimestamp == timestamp) return;
+  if (lastTimestamp == timestamp || (inferredDate && lastTimestamp.compareTo(timestamp) > 0)) {
+    return "repeated-timestamp";
+  }
+  const bool speedAvailable = number(gps[7], knots) && knots >= 0;
+  const bool headingAvailable = number(gps[8], heading) && heading >= 0 && heading <= 360;
   // A valid GNSS fix gives TLS a clock even with neither uplink available.
   tm utc{};
-  if (strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) {
+  if (!inferredDate && strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) {
     const timeval now{mktime(&utc), 0};  // ESP32 boots with the UTC timezone.
     settimeofday(&now, nullptr);
   }
 
   String gnss[18];
   double satellites, hdop;
-  if (!command("AT+CGNSSINFO", "+CGNSSINFO:", response, 10000) ||
-      !splitFields(response, gnss, 18) || !number(gnss[17], satellites) ||
-      satellites < 1 || satellites > 255 || floor(satellites) != satellites) {
-    Serial.printf("GPS fix received. Waiting for satellite count (%s)\n", response.isEmpty() ? "empty GNSS response" : "incomplete GNSS response");
-    return;
-  }
-
-  const double battery = readBatteryVoltage();
-  if (!isfinite(battery)) {
-    Serial.println("Could not read the battery voltage");
-    return;
-  }
+  const bool hasGnssDetails = command("AT+CGNSSINFO", "+CGNSSINFO:", response, 10000) &&
+                              splitFields(response, gnss, 18);
+  const bool satelliteCountAvailable = hasGnssDetails && number(gnss[17], satellites) &&
+                                       satellites >= 1 && satellites <= 255 && floor(satellites) == satellites;
 
   JsonDocument batch;
-  auto sample = beginSample(batch, timestamp, battery);
+  auto sample = beginSample(batch, timestamp, readBatteryVoltage());
   sample["latitude"] = latitude;
   sample["longitude"] = longitude;
-  sample["speedMps"] = knots * 0.514444;
-  sample["headingDeg"] = heading == 360 ? 0 : heading;
+  if (speedAvailable) sample["speedMps"] = knots * 0.514444;
+  else sample["speedMps"] = nullptr;
+  if (headingAvailable) sample["headingDeg"] = heading == 360 ? 0 : heading;
+  else sample["headingDeg"] = nullptr;
   sample["fixValid"] = true;
-  sample["satelliteCount"] = static_cast<int>(satellites);
-  if (number(gnss[15], hdop) && hdop >= 0) sample["hdop"] = hdop;
+  if (satelliteCountAvailable) sample["satelliteCount"] = static_cast<int>(satellites);
+  else sample["satelliteCount"] = nullptr;
+  if (hasGnssDetails && number(gnss[15], hdop) && hdop >= 0) sample["hdop"] = hdop;
   serializeJson(batch, pending);
   lastTimestamp = timestamp;
-  Serial.printf("Captured GPS fix at %s with %d satellites\n", timestamp, static_cast<int>(satellites));
+  if (inferredDate) Serial.println("GPS fix accepted with date inferred from UTC clock");
+  if (satelliteCountAvailable) {
+    Serial.printf("Captured GPS fix at %s with %d satellites\n", timestamp, static_cast<int>(satellites));
+  } else {
+    Serial.printf("Captured GPS fix at %s (satellite count unavailable)\n", timestamp);
+  }
+  return nullptr;
 }
 
 bool queueOnCard(const String &payload) {
@@ -478,23 +515,21 @@ bool sendPayload(JsonDocument &batch) {
 }
 
 // Status reports are useful only while fresh, so never queue them on microSD.
-void sendNoGpsStatus() {
+void sendNoGpsStatus(const char *reason) {
   constexpr unsigned long interval = 24000;
   static unsigned long lastSent = 0;
   static bool sent = false;
   const auto now = millis();
   if (!clockReady() || (sent && now - lastSent < interval)) return;
-  const double battery = readBatteryVoltage();
-  if (!isfinite(battery)) return;
-
   const time_t currentTime = time(nullptr);
   tm utc{};
   gmtime_r(&currentTime, &utc);
   char timestamp[21];
   if (!strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc)) return;
   JsonDocument batch;
-  auto sample = beginSample(batch, timestamp, battery);
+  auto sample = beginSample(batch, timestamp, readBatteryVoltage());
   sample["fixValid"] = false;
+  sample["gpsStatusReason"] = reason;
   sample["satelliteCount"] = 0;
   sample["latitude"] = nullptr;
   sample["longitude"] = nullptr;
@@ -581,6 +616,7 @@ void setup() {
   cardReady = SD_MMC.begin("/sdcard", true) &&
               (SD_MMC.exists(queueDir) || SD_MMC.mkdir(queueDir));
   WiFi.persistent(false);
+  WiFi.setHostname(deviceId);
   WiFi.mode(WIFI_OFF);
   wifiOnly = !EBT_LTE_ENABLED || !String(EBT_API_URL).startsWith("https://");
   if (wifiOnly) serviceWifi();
@@ -607,10 +643,12 @@ void setup() {
 void loop() {
   checkFirmwareTrial();
   const auto pollStarted = millis();
-  bool capturedFix = false;
+  static unsigned long lastFreshFixAt = pollStarted;
+  const char *gpsStatusReason = nullptr;
   if (pending.isEmpty()) {
-    capture();
-    capturedFix = !pending.isEmpty();
+    gpsStatusReason = capture();
+    if (gpsStatusReason) Serial.printf("GPS skipped: %s\n", gpsStatusReason);
+    else lastFreshFixAt = millis();
   }
   if (!clockReady() && !wifiOnly) {
     syncModemTime();
@@ -622,12 +660,7 @@ void loop() {
   }
   if (wifiOnly || lteFailures >= 3 || firmwareWifiNeeded()) serviceWifi();
   if (wifiOnly || clockReady()) sendQueued(pollStarted);
-  // Require three missed polls before reporting GPS loss to avoid flashing
-  // the status on and off when one reading is incomplete.
-  static unsigned int missedPolls = 0;
-  if (capturedFix) missedPolls = 0;
-  else if (pending.isEmpty() && missedPolls < 3) ++missedPolls;
-  if (missedPolls == 3 && millis() - pollStarted < pollInterval) sendNoGpsStatus();
+  if (gpsStatusReason && millis() - lastFreshFixAt >= gpsLossInterval) sendNoGpsStatus(gpsStatusReason);
   serviceFirmwareUpdate();
   const auto elapsed = millis() - pollStarted;
   if (elapsed < pollInterval) delay(pollInterval - elapsed);

@@ -118,6 +118,13 @@ main { padding-block: clamp(1.4rem, 4vw, 2.75rem); }
   from { transform: scale(1); opacity: 1; }
   to { transform: scale(3.6); opacity: 0; }
 }
+@media (prefers-reduced-motion: no-preference) {
+  .connection.connecting .status-dot,
+  .connection.reconnecting .status-dot { animation: connection-fade 1.8s ease-in-out infinite; }
+}
+@keyframes connection-fade {
+  50% { opacity: 0.35; }
+}
 @media (prefers-reduced-motion: reduce) {
   .status-pulse { display: none; }
 }

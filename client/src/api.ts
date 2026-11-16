@@ -8,11 +8,12 @@ export interface Device {
 
 export type DeviceSettings = Pick<Device, "displayName" | "colour">;
 
-export interface StoredSample extends Omit<GpsSample, "hdop">,
+export interface StoredSample extends Omit<GpsSample, "hdop" | "gpsStatusReason">,
   Pick<TelemetryBatch, "deviceId" | "firmwareVersion" | "recordingSessionId" | "recordingState" | "transport" | "batteryVoltage"> {
   protocolVersion: number;
   receivedAt: string;
   hdop: number | null;
+  gpsStatusReason?: GpsSample["gpsStatusReason"] | null;
   cellularRssiDbm: number | null;
   cellularRsrpDbm: number | null;
   cellularRsrqDb: number | null;

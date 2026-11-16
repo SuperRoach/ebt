@@ -2,6 +2,11 @@ import telemetrySchema from "./telemetry-v1.schema.json" with { type: "json" };
 
 export { telemetrySchema };
 
+export type GpsStatusReason = "modem-no-response" | "no-fix" | "incomplete-response"
+  | "invalid-position" | "invalid-latitude" | "invalid-longitude" | "invalid-gps-time"
+  | "repeated-timestamp" | "motion-unavailable"
+  | "satellite-count-unavailable" | "battery-unavailable";
+
 export interface GpsSample {
   sequence: string;
   timestamp: string;
@@ -10,8 +15,9 @@ export interface GpsSample {
   speedMps: number | null;
   headingDeg: number | null;
   fixValid: boolean;
-  satelliteCount: number;
+  satelliteCount: number | null;
   hdop?: number;
+  gpsStatusReason?: GpsStatusReason;
 }
 
 export interface CellularSignal {
@@ -29,7 +35,7 @@ export interface TelemetryBatch {
   recordingState: "idle" | "recording" | "paused" | "stopped";
   transport: "wifi" | "4g";
   cellularSignal?: CellularSignal;
-  batteryVoltage: number;
+  batteryVoltage: number | null;
   samples: GpsSample[];
 }
 

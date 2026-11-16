@@ -115,9 +115,9 @@ function Telemetry({ sample, capturedAt, captureReceivedAt, lastUploadAt, status
         <dd>
           <span className="telemetry-chip gps-chip" data-fix={hasFix} tabIndex={0} aria-describedby={gpsTooltipId}>
             <span className="satellite-icon" aria-hidden="true" />
-            {hasFix && <span aria-hidden="true">{sample.satelliteCount}</span>}
+            {hasFix && <span aria-hidden="true">{sample.satelliteCount ?? "—"}</span>}
             <span className="battery-tooltip" id={gpsTooltipId} role="tooltip">
-              {hasFix ? `GPS fix · ${sample.satelliteCount} satellites` : sample ? "No GPS fix" : "GPS status unavailable"}
+              {hasFix ? `GPS fix · ${sample.satelliteCount == null ? "Satellite count unavailable" : `${sample.satelliteCount} satellites`}` : sample ? "No GPS fix" : "GPS status unavailable"}
               {capturedLabel && <><br />GPS captured {capturedLabel}</>}
             </span>
           </span>

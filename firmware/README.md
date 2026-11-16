@@ -53,7 +53,11 @@ tracker profile at a time, using a separate output directory such as
 device ID and reports captures and server acknowledgements. Check the stored fix on the dashboard
 for the API you configured.
 
-The tracker targets one GPS poll every 5 seconds on LTE and Wi-Fi. Uploads run one at a time. If a modem command or upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout.
+The tracker targets one GPS poll every 2 seconds on LTE and Wi-Fi. Uploads run one at a time. If a modem command or upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout. The Wi-Fi hostname matches the device ID, such as `lps-ebt-01` or `lps-ebt-02`.
+
+If the modem reports a position and UTC time with a blank GPS date, the tracker can infer the date from its synchronized clock. It accepts an inferred timestamp at most 30 seconds behind or 2 seconds ahead of that clock and never uses it to set the clock.
+
+A fix can carry a position when speed, heading, satellite count, or battery voltage is unavailable. The tracker sends each unavailable field as `null`.
 
 ## OTA rollout
 
@@ -77,4 +81,4 @@ With the board powered off, insert an activated data SIM and connect the LTE ant
 
 With an HTTPS URL, the tracker starts with Wi-Fi off. After three failed LTE upload attempts it enables Wi-Fi and automatically reconnects when the network returns. It retries LTE about once a minute, then turns Wi-Fi off after an LTE upload is acknowledged. If Wi-Fi cannot connect for 30 seconds, it pauses Wi-Fi attempts for a minute. The microSD queue retains unacknowledged fixes with their original sequence IDs.
 
-After three missed GPS polls, the tracker can send a status update about every 24 seconds while GPS is unavailable. The dashboard shows the connection and keeps the last known position. Status updates are sent live and skipped when offline. GPS, cellular network time, or Wi-Fi time sync can set the clock for HTTPS and status timestamps. Watch the serial monitor for `LTE acknowledged` or `Wi-Fi acknowledged` to confirm delivery.
+After 15 seconds without a fresh GPS fix, the tracker can send a status update about every 24 seconds while GPS is unavailable. The dashboard shows the connection and keeps the last known position. Status updates are sent live and skipped when offline. They report the reason the latest GPS poll was skipped in `gpsStatusReason`. The API logs the reason when it stores the status update. GPS, cellular network time, or Wi-Fi time sync can set the clock for HTTPS and status timestamps. Watch the serial monitor for `GPS skipped` to identify why a poll did not produce a fix and for `LTE acknowledged` or `Wi-Fi acknowledged` to confirm delivery.
