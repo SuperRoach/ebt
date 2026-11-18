@@ -62,11 +62,16 @@ export function position(sample: StoredSample): Position | null {
   return [sample.latitude, sample.longitude];
 }
 
-export function trailSegments(samples: StoredSample[], now: number): Position[][] {
+interface TrailPoint {
+  point: Position;
+  speedMps: StoredSample["speedMps"];
+}
+
+export function trailSegments(samples: StoredSample[], now: number): TrailPoint[][] {
   const latest = samples[0];
   if (!latest) return [];
-  const segments: Position[][] = [];
-  let segment: Position[] = [];
+  const segments: TrailPoint[][] = [];
+  let segment: TrailPoint[] = [];
   let previous: StoredSample | undefined;
   for (const sample of [...samples].reverse()) {
     const captured = captureTime(sample);
@@ -79,7 +84,7 @@ export function trailSegments(samples: StoredSample[], now: number): Position[][
       if (segment.length > 1) segments.push(segment);
       segment = [];
     }
-    if (usable) segment.push(point);
+    if (usable) segment.push({ point, speedMps: sample.speedMps });
     previous = usable ? sample : undefined;
   }
   if (segment.length > 1) segments.push(segment);

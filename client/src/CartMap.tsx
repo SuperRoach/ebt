@@ -37,8 +37,11 @@ export function CartMap({ carts, followId, fitRequest }: {
 }) {
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<L.Map>(null);
+  const refreshTrailHighlight = useRef<() => void>(() => {});
   const layers = useRef(new Map<string, {
     trail: L.Polyline;
+    samples: MapCart["trail"];
+    colour: string;
     marker?: L.Marker;
     glyph?: HTMLSpanElement;
     lastPulsedSequence?: string;
@@ -51,11 +54,50 @@ export function CartMap({ carts, followId, fitRequest }: {
     const map = L.map(container.current!, { zoomControl: false, maxZoom: 19 }).setView(circuit, 16);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     L.control.scale({ position: "bottomleft", imperial: false }).addTo(map);
+    const highlight = L.circleMarker(circuit, {
+      radius: 6, color: "#fff", weight: 2, fillOpacity: 1, interactive: false,
+    }).bindTooltip("", { direction: "top", offset: [0, -8], opacity: 1 });
+    let cursor: L.Point | undefined;
+    function clearHighlight() {
+      cursor = undefined;
+      highlight.remove();
+    }
+    function highlightSpeed() {
+      if (!cursor) return;
+      let nearest;
+      let distance = 12;
+      for (const { samples, colour } of layers.current.values()) {
+        for (const segment of samples) {
+          for (const { point, speedMps } of segment) {
+            const candidate = map.latLngToLayerPoint(point).distanceTo(cursor);
+            if (candidate > distance || (candidate === distance && nearest?.speedMps != null)) continue;
+            distance = candidate;
+            nearest = { point, speedMps, colour };
+          }
+        }
+      }
+      if (nearest?.speedMps == null) {
+        highlight.remove();
+        return;
+      }
+      highlight.setLatLng(nearest.point).setStyle({ fillColor: nearest.colour })
+        .setTooltipContent(`${(nearest.speedMps * 3.6).toFixed(1)} km/h`);
+      highlight.addTo(map).bringToFront().openTooltip();
+    }
+    map.on("mousemove", ({ layerPoint }: L.LeafletMouseEvent) => {
+      cursor = layerPoint;
+      highlightSpeed();
+    });
+    map.on("movestart zoomstart", clearHighlight);
+    const surface = map.getContainer();
+    surface.addEventListener("mouseleave", clearHighlight);
+    refreshTrailHighlight.current = highlightSpeed;
     instance.current = map;
     const observer = new ResizeObserver(() => map.invalidateSize({ pan: false }));
     observer.observe(container.current!);
     return () => {
       observer.disconnect();
+      surface.removeEventListener("mouseleave", clearHighlight);
       map.remove();
       layers.current.clear();
       instance.current = null;
@@ -106,10 +148,16 @@ export function CartMap({ carts, followId, fitRequest }: {
       const { device, number, colour, historical, positionDemo, point, trail, liveSequence } = cart;
       let layer = layers.current.get(device.id);
       if (!layer) {
-        layer = { trail: L.polyline([], { color: colour, weight: 4, opacity: 0.84, dashArray: "5 7", interactive: false }).addTo(map) };
+        layer = {
+          trail: L.polyline([], { color: colour, weight: 4, opacity: 0.84, dashArray: "5 7", interactive: false }).addTo(map),
+          samples: trail,
+          colour,
+        };
         layers.current.set(device.id, layer);
       }
-      layer.trail.setStyle({ color: colour }).setLatLngs(trail);
+      layer.samples = trail;
+      layer.colour = colour;
+      layer.trail.setStyle({ color: colour }).setLatLngs(trail.map((segment) => segment.map(({ point }) => point)));
       if (!point) {
         layer.marker?.remove();
         layer.marker = undefined;
@@ -151,6 +199,7 @@ export function CartMap({ carts, followId, fitRequest }: {
       }
     }
 
+    refreshTrailHighlight.current();
     if (fitRequest !== lastFit.current) {
       lastFit.current = fitRequest;
       const points = carts.flatMap(({ point }) => point ? [point] : []);

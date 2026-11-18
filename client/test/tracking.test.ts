@@ -32,9 +32,9 @@ function sample(sequence: string, age: number, overrides: Partial<StoredSample> 
 }
 
 test("freshness uses GPS capture time and the connection, including no-fix and future samples", () => {
-  assert.equal(cartStatus(sample("1", 29_999), now, true), "Live");
+  assert.equal(cartStatus(sample("1", 34_999), now, true), "Live");
   assert.equal(cartStatus(sample("1", 0), now, false), "Delayed");
-  assert.equal(cartStatus(sample("1", 30_000), now, true), "Delayed");
+  assert.equal(cartStatus(sample("1", 35_000), now, true), "Delayed");
   assert.equal(cartStatus(sample("1", 90_000), now, true), "Offline");
   assert.equal(cartStatus(sample("1", -60_000), now, true), "Delayed");
   assert.equal(cartStatus(sample("1", 0, { fixValid: false }), now, true), "No GPS Fix");
@@ -63,9 +63,9 @@ test("stored positions keep a last known fix and a short trail after the live wi
 
 test("trails break at lost fixes, time gaps, sessions and source changes", () => {
   const newest = sample("08", 0);
-  const recent = sample("07", 5000);
+  const recent = sample("07", 5000, { speedMps: 0 });
   const noFix = sample("06", 10_000, { fixValid: false });
-  const earlier = sample("05", 15_000);
+  const earlier = sample("05", 15_000, { speedMps: null });
   const start = sample("04", 20_000);
   const otherSession = sample("03", 24_000, { recordingSessionId: "previous" });
   const otherSource = sample("02", 28_000, { firmwareVersion: "1.0.0" });
@@ -74,5 +74,5 @@ test("trails break at lost fixes, time gaps, sessions and source changes", () =>
   assert.equal(isDemo(otherSource), false);
   const point = [-37.0442, 143.7422];
   assert.deepEqual(trailSegments([newest, recent, noFix, earlier, start, otherSession, otherSource, beforeGap], now),
-    [[point, point], [point, point]]);
+    [[{ point, speedMps: 3.5 }, { point, speedMps: null }], [{ point, speedMps: 0 }, { point, speedMps: 3.5 }]]);
 });
