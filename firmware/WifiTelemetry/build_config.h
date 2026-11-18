@@ -6,9 +6,9 @@
 
 #ifndef EBT_FIRMWARE_VERSION
 #if EBT_LTE_ENABLED
-#define EBT_FIRMWARE_VERSION "dual-link-0.5.14"
+#define EBT_FIRMWARE_VERSION "dual-link-0.5.18-speed-test"
 #else
-#define EBT_FIRMWARE_VERSION "wifi-only-0.5.1"
+#define EBT_FIRMWARE_VERSION "wifi-only-0.5.18-speed-test"
 #endif
 #endif
 

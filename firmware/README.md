@@ -53,7 +53,7 @@ tracker profile at a time, using a separate output directory such as
 device ID and reports captures and server acknowledgements. Check the stored fix on the dashboard
 for the API you configured.
 
-The tracker targets one GPS poll every 2 seconds on LTE and Wi-Fi. Uploads run one at a time. If a modem command or upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout. The Wi-Fi hostname matches the device ID, such as `lps-ebt-01` or `lps-ebt-02`.
+The tracker targets one GPS poll per second on LTE and Wi-Fi. Uploads run one at a time. If a modem command or upload runs long, the next poll starts as soon as the work finishes. Wi-Fi automatically reconnects to the configured network after a dropout. The Wi-Fi hostname matches the device ID, such as `lps-ebt-01` or `lps-ebt-02`.
 
 If the modem reports a position and UTC time with a blank GPS date, the tracker can infer the date from its synchronized clock. It accepts an inferred timestamp at most 30 seconds behind or 2 seconds ahead of that clock and never uses it to set the clock.
 

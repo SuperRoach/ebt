@@ -12,6 +12,7 @@
 
 #include "../include/secrets.h"
 #include "build_config.h"
+#include "gnss_motion.h"
 #include "ota.h"
 #include "telemetry_ca.h"
 
@@ -19,7 +20,7 @@ namespace {
 constexpr int modemRx = 17;
 constexpr int modemTx = 18;
 constexpr unsigned long baud = 115200;
-constexpr unsigned long pollInterval = 2000;
+constexpr unsigned long pollInterval = 1000;
 constexpr unsigned long gpsLossInterval = 15000;
 HardwareSerial modem(1);
 
@@ -108,16 +109,16 @@ void randomId(char (&id)[33]) {
   for (int i = 0; i < 4; ++i) snprintf(id + 8 * i, 9, "%08lx", (unsigned long)esp_random());
 }
 
-bool splitFields(const String &data, String *fields, size_t count) {
+size_t splitFields(const String &data, String *fields, size_t count) {
   int start = 0;
   for (size_t i = 0; i < count; ++i) {
     const int end = data.indexOf(',', start);
     fields[i] = end < 0 ? data.substring(start) : data.substring(start, end);
     fields[i].trim();
-    if (end < 0) return i + 1 == count;
+    if (end < 0) return i + 1;
     start = end + 1;
   }
-  return true;
+  return count;
 }
 
 bool number(const String &field, double &value) {
@@ -220,65 +221,130 @@ void syncModemTime() {
   settimeofday(&now, nullptr);
 }
 
-const char *capture() {
+struct GpsFix {
+  char timestamp[21];
+  String utcTime;
+  double latitude;
+  double longitude;
+  bool inferredDate;
+  GnssMotion motion;
+};
+
+bool fixTimestamp(const String &date, const String &time, char (&timestamp)[21]) {
+  return date.isEmpty() ? inferGpsTimestamp(time, timestamp) : utcTimestamp(date, time, timestamp);
+}
+
+void syncGpsClock(const GpsFix &fix) {
+  // A valid dated fix gives TLS a clock even with neither uplink available.
+  tm utc{};
+  if (!fix.inferredDate && strptime(fix.timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) {
+    const timeval now{mktime(&utc), 0};  // ESP32 boots with the UTC timezone.
+    settimeofday(&now, nullptr);
+  }
+}
+
+const char *readGpsFix(GpsFix &fix, unsigned long timeout) {
   String response;
   String gps[9];
-  if (!command("AT+CGPSINFO", "+CGPSINFO:", response, 10000)) {
+  if (!command("AT+CGPSINFO", "+CGPSINFO:", response, timeout)) {
     return "modem-no-response";
   }
   if (response.isEmpty() || response.startsWith(",")) {
     return "no-fix";
   }
-  if (!splitFields(response, gps, 9)) {
+  if (splitFields(response, gps, 9) < 6) {
     return "incomplete-response";
   }
 
-  char timestamp[21];
-  double latitude, longitude, knots, heading;
-  if (!coordinate(gps[0], gps[1], 'N', 'S', 90, latitude)) return "invalid-latitude";
-  if (!coordinate(gps[2], gps[3], 'E', 'W', 180, longitude)) return "invalid-longitude";
-  const bool inferredDate = gps[4].isEmpty();
-  if (!(inferredDate ? inferGpsTimestamp(gps[5], timestamp) : utcTimestamp(gps[4], gps[5], timestamp))) {
+  if (!coordinate(gps[0], gps[1], 'N', 'S', 90, fix.latitude)) return "invalid-latitude";
+  if (!coordinate(gps[2], gps[3], 'E', 'W', 180, fix.longitude)) return "invalid-longitude";
+  fix.inferredDate = gps[4].isEmpty();
+  if (!fixTimestamp(gps[4], gps[5], fix.timestamp)) {
     return "invalid-gps-time";
   }
-  if (lastTimestamp == timestamp || (inferredDate && lastTimestamp.compareTo(timestamp) > 0)) {
+  if (lastTimestamp == fix.timestamp || (fix.inferredDate && lastTimestamp.compareTo(fix.timestamp) > 0)) {
     return "repeated-timestamp";
   }
-  const bool speedAvailable = number(gps[7], knots) && knots >= 0;
-  const bool headingAvailable = number(gps[8], heading) && heading >= 0 && heading <= 360;
-  // A valid GNSS fix gives TLS a clock even with neither uplink available.
-  tm utc{};
-  if (!inferredDate && strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc)) {
-    const timeval now{mktime(&utc), 0};  // ESP32 boots with the UTC timezone.
-    settimeofday(&now, nullptr);
+  fix.utcTime = gps[5];
+  fix.motion = readGnssMotion(gps[7].c_str(), gps[8].c_str());
+  if (!fix.motion.speed.valid() || !fix.motion.heading.valid()) {
+    Serial.printf("GPS motion unavailable at %s: AT+CGPSINFO speed(knots)=\"%s\" (%s), heading(deg)=\"%s\" (%s)\n",
+                  fix.timestamp, gps[7].c_str(), fix.motion.speed.status,
+                  gps[8].c_str(), fix.motion.heading.status);
+  }
+  return nullptr;
+}
+
+const char *capture() {
+  const auto started = millis();
+  GpsFix fix;
+  if (const char *reason = readGpsFix(fix, 10000)) return reason;
+  syncGpsClock(fix);
+
+  String response, gnss[18];
+  const bool gnssResponded = command("AT+CGNSSINFO", "+CGNSSINFO:", response, 10000);
+  char gnssTimestamp[21];
+  const bool gnssHasFix = gnssResponded && splitFields(response, gnss, 18) >= 11 &&
+                          (gnss[0] == "2" || gnss[0] == "3") &&
+                          fixTimestamp(gnss[9], gnss[10], gnssTimestamp);
+  const GnssMotion gnssMotion = readGnssMotion(gnss[12].c_str(), gnss[13].c_str());
+  const auto matchesGnss = [&](const GpsFix &gps) {
+    return gnssHasFix && strcmp(gps.timestamp, gnssTimestamp) == 0 &&
+           sameUtcFixTime(gps.utcTime.c_str(), gnss[10].c_str());
+  };
+
+  // The commands can straddle a receiver update. Retry once when there is time
+  // left in the poll and the GNSS response can supply a missing motion field.
+  constexpr unsigned long retryTimeout = 750;
+  const bool needsMotion = !fix.motion.speed.valid() || !fix.motion.heading.valid();
+  const bool canRecoverMotion = (!fix.motion.speed.valid() && gnssMotion.speed.valid()) ||
+                                (!fix.motion.heading.valid() && gnssMotion.heading.valid());
+  if (canRecoverMotion && gnssHasFix && strcmp(gnssTimestamp, fix.timestamp) >= 0 &&
+      !matchesGnss(fix) && millis() - started <= pollInterval - retryTimeout) {
+    GpsFix retry;
+    if (!readGpsFix(retry, retryTimeout) && matchesGnss(retry) &&
+        (retry.motion.speed.valid() || gnssMotion.speed.valid() || !fix.motion.speed.valid()) &&
+        (retry.motion.heading.valid() || gnssMotion.heading.valid() || !fix.motion.heading.valid())) {
+      fix = retry;
+      syncGpsClock(fix);
+    }
   }
 
-  String gnss[18];
+  const bool sameFix = matchesGnss(fix);
+  const auto speed = selectMotion(fix.motion.speed, gnssMotion.speed, sameFix);
+  const auto heading = selectMotion(fix.motion.heading, gnssMotion.heading, sameFix);
+
   double satellites, hdop;
-  const bool hasGnssDetails = command("AT+CGNSSINFO", "+CGNSSINFO:", response, 10000) &&
-                              splitFields(response, gnss, 18);
-  const bool satelliteCountAvailable = hasGnssDetails && number(gnss[17], satellites) &&
+  const bool satelliteCountAvailable = sameFix && number(gnss[17], satellites) &&
                                        satellites >= 1 && satellites <= 255 && floor(satellites) == satellites;
 
   JsonDocument batch;
-  auto sample = beginSample(batch, timestamp, readBatteryVoltage());
-  sample["latitude"] = latitude;
-  sample["longitude"] = longitude;
-  if (speedAvailable) sample["speedMps"] = knots * 0.514444;
+  auto sample = beginSample(batch, fix.timestamp, readBatteryVoltage());
+  sample["latitude"] = fix.latitude;
+  sample["longitude"] = fix.longitude;
+  if (speed.source) sample["speedMps"] = speed.value * knotsToMps;
   else sample["speedMps"] = nullptr;
-  if (headingAvailable) sample["headingDeg"] = heading == 360 ? 0 : heading;
+  if (heading.source) sample["headingDeg"] = heading.value == 360 ? 0 : heading.value;
   else sample["headingDeg"] = nullptr;
   sample["fixValid"] = true;
   if (satelliteCountAvailable) sample["satelliteCount"] = static_cast<int>(satellites);
   else sample["satelliteCount"] = nullptr;
-  if (hasGnssDetails && number(gnss[15], hdop) && hdop >= 0) sample["hdop"] = hdop;
+  if (sameFix && number(gnss[15], hdop) && hdop >= 0) sample["hdop"] = hdop;
   serializeJson(batch, pending);
-  lastTimestamp = timestamp;
-  if (inferredDate) Serial.println("GPS fix accepted with date inferred from UTC clock");
+  lastTimestamp = fix.timestamp;
+  if (fix.inferredDate) Serial.println("GPS fix accepted with date inferred from UTC clock");
   if (satelliteCountAvailable) {
-    Serial.printf("Captured GPS fix at %s with %d satellites\n", timestamp, static_cast<int>(satellites));
+    Serial.printf("Captured GPS fix at %s with %d satellites\n", fix.timestamp, static_cast<int>(satellites));
   } else {
-    Serial.printf("Captured GPS fix at %s (satellite count unavailable)\n", timestamp);
+    Serial.printf("Captured GPS fix at %s (satellite count unavailable)\n", fix.timestamp);
+  }
+  if (needsMotion) {
+    const char *gnssStatus = !gnssResponded ? "command-failed" :
+                             !gnssHasFix ? "no-usable-fix" :
+                             sameFix ? "matched" : "epoch-mismatch";
+    Serial.printf("GPS motion sources at %s: speed=%s heading=%s CGNSSINFO=%s/%s/%s\n",
+                  fix.timestamp, speed.source ? speed.source : "none", heading.source ? heading.source : "none",
+                  gnssStatus, gnssMotion.speed.status, gnssMotion.heading.status);
   }
   return nullptr;
 }

@@ -289,7 +289,7 @@ test("SQLite telemetry API", async (t) => {
   await t.test("stores and broadcasts valid fixes with unavailable GPS metadata or battery voltage", async () => {
     const fixes = [
       { ...sample(80), speedMps: null },
-      { ...sample(81), headingDeg: null },
+      { ...sample(81), speedMps: 0, headingDeg: null },
       { ...sample(82, "2026-11-13T06:00:50.000Z"), speedMps: null, headingDeg: null, satelliteCount: null },
     ];
     const socket = new WebSocket(address.replace("http:", "ws:") + "/api/v1/ws");
