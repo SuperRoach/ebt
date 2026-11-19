@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { StoredSample } from "../src/api.js";
-import { cartStatus, isDemo, lastPositionSample, mergeSamples, trailSegments } from "../src/tracking.js";
+import { cartStatus, isDemo, lastPositionSample, lastSpeedSample, mergeSamples, trailSegments } from "../src/tracking.js";
 
 const now = Date.parse("2026-11-13T06:00:00.000Z");
 function sample(sequence: string, age: number, overrides: Partial<StoredSample> = {}): StoredSample {
@@ -75,4 +75,14 @@ test("trails break at lost fixes, time gaps, sessions and source changes", () =>
   const point = [-37.0442, 143.7422];
   assert.deepEqual(trailSegments([newest, recent, noFix, earlier, start, otherSession, otherSource, beforeGap], now),
     [[{ point, speedMps: 3.5 }, { point, speedMps: null }], [{ point, speedMps: 0 }, { point, speedMps: 3.5 }]]);
+});
+
+test("keeps the last measured speed through newer fixes without speed", () => {
+  const stopped = sample("stopped", 360_000, { speedMps: 0 });
+  const withoutSpeed = Array.from({ length: 210 }, (_, index) =>
+    sample(String(index), index * 1_000, { speedMps: null }));
+  const merged = mergeSamples([stopped], withoutSpeed, now);
+  assert.equal(merged.length, 200);
+  assert.equal(lastSpeedSample(merged, now), stopped);
+  assert.equal(lastSpeedSample(withoutSpeed, now), undefined);
 });

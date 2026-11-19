@@ -4,7 +4,7 @@ import { About } from "./About.js";
 import { uploadFirmware, type StoredSample } from "./api.js";
 import { CartMap, type MapCart } from "./CartMap.js";
 import { DashboardMessage } from "./DashboardMessage.js";
-import { cartStatus, isDemo, lastPositionSample, position, trailSegments } from "./tracking.js";
+import { cartStatus, isDemo, lastPositionSample, lastSpeedSample, position, SPEED_FRESH_MS, trailSegments } from "./tracking.js";
 import { useTracking } from "./useTracking.js";
 
 const colours = ["#1551b0", "#9c360d", "#5b3b9c", "#126d5d"];
@@ -62,11 +62,12 @@ function ageLabel(timestamp: string, now: number) {
   return `${Math.floor(seconds / 86400)} d ago`;
 }
 
-function Telemetry({ sample, capturedAt, captureReceivedAt, lastUploadAt, status, now }: {
+function Telemetry({ sample, speedSample, capturedAt, captureReceivedAt, lastUploadAt, now }: {
   sample: StoredSample | undefined; capturedAt?: string; captureReceivedAt?: string; lastUploadAt?: string;
-  status: MapCart["status"]; now: number;
+  speedSample?: StoredSample; now: number;
 }) {
-  const speed = status === "Live" && sample?.speedMps != null ? (sample.speedMps * 3.6).toFixed(1) : null;
+  const speed = speedSample?.speedMps == null ? null : (speedSample.speedMps * 3.6).toFixed(1);
+  const staleSpeed = speedSample != null && now - Date.parse(speedSample.timestamp) >= SPEED_FRESH_MS;
   const batteryTooltipId = useId();
   const recordingTooltipId = useId();
   const gpsTooltipId = useId();
@@ -88,7 +89,9 @@ function Telemetry({ sample, capturedAt, captureReceivedAt, lastUploadAt, status
     Math.round(Math.min(1, Math.max(0, (batteryVoltage - emptyVoltage) / (fullVoltage - emptyVoltage))) * 100);
   return <>
     <dl className="cart-readings">
-      <div><dt className="sr-only">Speed</dt><dd className="speed">{speed ?? "—"} <span>km/h</span></dd></div>
+      <div><dt className="sr-only">Speed</dt><dd className={staleSpeed ? "speed stale-speed" : "speed"}>
+        {staleSpeed && <span className="sr-only">Last recorded </span>}{speed ?? "—"} <span>km/h</span>
+      </dd></div>
       <div className="battery-metric"><dt className="sr-only">Battery</dt><dd className="battery-value">
         <span className="battery-icon" aria-hidden="true">
           {batteryPercent != null && <span className="battery-fill" style={{ width: `${batteryPercent}%` }} />}
@@ -157,7 +160,7 @@ export function App() {
     const fix = lastPositionSample(recent, now);
     const historical = Boolean(fix && status !== "Live");
     return {
-      device, sample, maxSpeedKmh: maxSpeedMps === null ? null : maxSpeedMps * 3.6,
+      device, sample, speedSample: lastSpeedSample(recent, now), maxSpeedKmh: maxSpeedMps === null ? null : maxSpeedMps * 3.6,
       capturedAt: fix?.timestamp, captureReceivedAt: fix?.receivedAt, status, historical, number: index + 1,
       colour: device.colour ?? (historical ? "#606b75" : colours[index % colours.length]),
       liveSequence: status === "Live" ? sample?.sequence : undefined,
@@ -264,7 +267,7 @@ export function App() {
           {loading && !carts.length && <p className="empty" role="status">Loading devices…</p>}
           {!loading && !carts.length && !error && <p className="empty">No tracking devices are registered.</p>}
           {!loading && !carts.length && error && <p className="empty">Device list unavailable.</p>}
-          {carts.map(({ device, colour, number, demo: simulated, status, sample, capturedAt, captureReceivedAt, liveSequence }) =>
+          {carts.map(({ device, colour, number, demo: simulated, status, sample, speedSample, capturedAt, captureReceivedAt, liveSequence }) =>
             <article className="cart-card" key={device.id} style={{ "--cart-colour": colour } as CSSProperties}>
               <div className="cart-heading">
                 <span className="cart-number" aria-hidden="true">{number}</span>
@@ -282,8 +285,8 @@ export function App() {
                 </div>
               </div>
               {simulated && <p className="demo-tag">Demo telemetry</p>}
-              <Telemetry sample={sample} capturedAt={capturedAt} captureReceivedAt={captureReceivedAt}
-                lastUploadAt={lastUploads[device.id]} status={status} now={now} />
+              <Telemetry sample={sample} speedSample={speedSample} capturedAt={capturedAt} captureReceivedAt={captureReceivedAt}
+                lastUploadAt={lastUploads[device.id]} now={now} />
               <label className="visibility">
                 <input type="checkbox" checked={!hidden.includes(device.id)} onChange={(event) => {
                   const show = event.target.checked;

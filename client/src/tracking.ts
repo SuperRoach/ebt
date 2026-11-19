@@ -1,6 +1,7 @@
 import type { StoredSample, TelemetryEvent } from "./api.js";
 
 export const LIVE_MS = 35_000;
+export const SPEED_FRESH_MS = 50_000;
 export const OFFLINE_MS = 90_000;
 export const TRAIL_MS = 5 * 60_000;
 const FUTURE_TOLERANCE_MS = 5_000;
@@ -28,15 +29,20 @@ export function mergeSamples(existing: StoredSample[], incoming: StoredSample[],
   for (const sample of incoming) bySequence.set(sample.sequence, sample);
   const sorted = [...bySequence.values()]
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.sequence.localeCompare(a.sequence));
-  const retained = sorted
-    .filter((sample, index) => index < HISTORY_POINTS || Date.parse(sample.timestamp) >= now - TRAIL_MS)
-    .slice(0, SAMPLE_LIMIT);
-  const lastFix = lastPositionSample(sorted, now);
-  if (lastFix && !retained.includes(lastFix)) {
-    if (retained.length === SAMPLE_LIMIT) retained.pop();
-    retained.push(lastFix);
-  }
-  return retained;
+  const fallbackSamples = new Set([lastPositionSample(sorted, now), lastSpeedSample(sorted, now)]);
+  fallbackSamples.delete(undefined);
+  let remaining = SAMPLE_LIMIT - fallbackSamples.size;
+  return sorted.filter((sample, index) => {
+    if (fallbackSamples.has(sample)) return true;
+    if (remaining === 0 || (index >= HISTORY_POINTS && Date.parse(sample.timestamp) < now - TRAIL_MS)) return false;
+    remaining--;
+    return true;
+  });
+}
+
+export function lastSpeedSample(samples: StoredSample[], now: number) {
+  return samples.find((sample) => sample.speedMps != null && position(sample) &&
+    captureTime(sample) <= now + FUTURE_TOLERANCE_MS);
 }
 
 export function lastPositionSample(samples: StoredSample[], now: number) {
