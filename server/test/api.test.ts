@@ -75,7 +75,11 @@ test("SQLite telemetry API", async (t) => {
   const url = `file:${join(dir, "test.db")}`;
   const db = createDatabase(url);
   const adminToken = "verification-admin-token";
+  const previousFirmwareDirectory = process.env.FIRMWARE_STORAGE_DIR;
+  process.env.FIRMWARE_STORAGE_DIR = join(dir, "firmware");
   const app = await buildApp(db, false, adminToken);
+  if (previousFirmwareDirectory === undefined) delete process.env.FIRMWARE_STORAGE_DIR;
+  else process.env.FIRMWARE_STORAGE_DIR = previousFirmwareDirectory;
   t.after(async () => {
     await app.close();
     await db.$disconnect();
@@ -103,6 +107,29 @@ test("SQLite telemetry API", async (t) => {
     url: "/api/v1/telemetry",
     headers: key ? { authorization: `Bearer ${key}` } : {},
     payload: payload as object,
+  });
+
+  await t.test("serves authenticated firmware chunks and keeps full downloads compatible", async () => {
+    const binary = Buffer.from(Array.from({ length: 18000 }, (_, i) => i % 251));
+    const upload = await app.inject({
+      method: "POST", url: "/api/v1/admin/devices/lps-ebt-01/firmware", payload: binary,
+      headers: { authorization: `Bearer ${adminToken}`, "content-type": "application/octet-stream",
+        "x-firmware-version": "ota-chunk-test" },
+    });
+    assert.equal(upload.statusCode, 201, upload.body);
+    const path = `/api/v1/firmware/releases/${upload.json().release.id}`;
+    const get = (suffix: string, device: keyof typeof keys = "lps-ebt-01") =>
+      app.inject({ url: path + suffix, headers: { authorization: `Bearer ${keys[device]}` } });
+    assert.deepEqual((await get("")).rawPayload, binary);
+    for (const [offset, length] of [[0, 8192], [8192, 8192], [16384, 1616]]) {
+      const response = await get(`?offset=${offset}&length=${length}`);
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.rawPayload, binary.subarray(offset, offset + length));
+    }
+    assert.equal((await get("?offset=17999&length=2")).statusCode, 416);
+    assert.equal((await get("?offset=0")).statusCode, 416);
+    assert.equal((await get("?offset=0&length=16385")).statusCode, 416);
+    assert.equal((await get("?offset=0&length=8192", "lps-ebt-02")).statusCode, 404);
   });
 
   await t.test("health, seeded devices, and rename surviving reseeding", async () => {

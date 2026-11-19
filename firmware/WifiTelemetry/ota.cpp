@@ -36,9 +36,24 @@ bool matches(const char *value, size_t length, bool uuid = false) {
   return true;
 }
 
-bool downloadFirmware() {
-  const auto *partition = esp_ota_get_next_update_partition(nullptr);
-  if (!partition || pending.size > partition->size) return false;
+constexpr size_t chunkSize = 8192;
+uint8_t chunk[chunkSize];
+esp_ota_handle_t handle;
+const esp_partition_t *target = nullptr;
+mbedtls_sha256_context hash;
+size_t offset = 0;
+bool cellularFailed = false;
+unsigned long cellularFailedAt;
+
+void resetDownload() {
+  if (!target) return;
+  esp_ota_abort(handle);
+  mbedtls_sha256_free(&hash);
+  target = nullptr;
+  offset = 0;
+}
+
+bool readWifiChunk(const String &url, size_t length) {
   NetworkClientSecure client;
   client.setCACert(telemetryRootCa);
   client.setHandshakeTimeout(5);
@@ -46,47 +61,29 @@ bool downloadFirmware() {
   http.useHTTP10();
   http.setConnectTimeout(5000);
   http.setTimeout(5000);
-  if (!http.begin(client, origin + "/api/v1/firmware/releases/" + pending.id)) return false;
+  if (!http.begin(client, url)) return false;
   http.addHeader("Authorization", String("Bearer ") + EBT_DEVICE_KEY);
-  if (http.GET() != HTTP_CODE_OK || http.getSize() != static_cast<int>(pending.size)) return false;
-
-  esp_ota_handle_t handle;
-  if (esp_ota_begin(partition, pending.size, &handle) != ESP_OK) return false;
-  mbedtls_sha256_context hash;
-  mbedtls_sha256_init(&hash);
-  bool ok = mbedtls_sha256_starts(&hash, 0) == 0;
-  uint8_t buffer[2048];
-  size_t remaining = pending.size;
-  const auto started = millis();
-  auto lastRead = started;
+  if (http.GET() != HTTP_CODE_OK || http.getSize() != static_cast<int>(length)) return false;
   auto &stream = http.getStream();
-  while (ok && remaining && millis() - started < 120000) {
-    const int available = stream.available();
-    if (available <= 0) {
-      if (!http.connected() || millis() - lastRead >= 5000) break;
-      delay(2);
-      continue;
-    }
-    const int received = stream.read(buffer, min(min(remaining, sizeof(buffer)), static_cast<size_t>(available)));
-    if (received <= 0) break;
-    lastRead = millis();
-    ok = mbedtls_sha256_update(&hash, buffer, received) == 0 &&
-         esp_ota_write(handle, buffer, received) == ESP_OK;
-    remaining -= received;
-    delay(1);
-  }
+  stream.setTimeout(5000);
+  return stream.readBytes(chunk, length) == length;
+}
+
+bool finishDownload() {
   uint8_t digest[32];
-  ok = ok && remaining == 0 && mbedtls_sha256_finish(&hash, digest) == 0;
-  mbedtls_sha256_free(&hash);
-  if (ok) {
-    char hex[65];
+  const bool hashed = mbedtls_sha256_finish(&hash, digest) == 0;
+  char hex[65];
+  if (hashed) {
     for (size_t i = 0; i < sizeof(digest); ++i) snprintf(hex + i * 2, 3, "%02x", digest[i]);
-    ok = pending.digest.equalsIgnoreCase(hex);
   }
-  if (!ok) {
-    esp_ota_abort(handle);
+  if (!hashed || !pending.digest.equalsIgnoreCase(hex)) {
+    resetDownload();
     return false;
   }
+  const auto *partition = target;
+  mbedtls_sha256_free(&hash);
+  target = nullptr;
+  offset = 0;
   if (esp_ota_end(handle) != ESP_OK) return false;
   Preferences preferences;
   if (!preferences.begin("ebt-ota") || preferences.putString("last-release", pending.id) != pending.id.length()) return false;
@@ -121,6 +118,7 @@ void acceptFirmwareOffer(JsonVariantConst offer) {
   }
   if (trial) return;
   if (offer.isNull()) {
+    resetDownload();
     pending = {};
     return;
   }
@@ -137,22 +135,58 @@ void acceptFirmwareOffer(JsonVariantConst offer) {
   origin = url.substring(0, path);
   const auto *partition = esp_ota_get_next_update_partition(nullptr);
   if (!partition || size > partition->size) return;
-  if (pending.id != id) attempted = false;
+  if (pending.id != id) {
+    resetDownload();
+    cellularFailed = false;
+    attempted = false;
+  }
   pending = {id, digest, size};
 }
 
 bool firmwareWifiNeeded() {
-  return !pending.id.isEmpty() && (!attempted || millis() - lastAttempt >= 60000);
+  return !pending.id.isEmpty() && cellularFailed &&
+         (!attempted || millis() - lastAttempt >= 60000);
 }
 
-void serviceFirmwareUpdate() {
-  if (!firmwareWifiNeeded() || WiFi.status() != WL_CONNECTED) return;
-  Serial.printf("Downloading firmware release %s over Wi-Fi\n", pending.id.c_str());
-  if (downloadFirmware()) {
-    Serial.println("Firmware verified. Rebooting into the OTA slot.");
-    ESP.restart();
+void serviceFirmwareUpdate(bool cellularEnabled) {
+  if (pending.id.isEmpty() || (attempted && millis() - lastAttempt < 60000)) return;
+  const size_t length = min(chunkSize, pending.size - offset);
+  const String url = origin + "/api/v1/firmware/releases/" + pending.id +
+                     "?offset=" + String(offset) + "&length=" + String(length);
+  bool received = false;
+  if (cellularEnabled && (!cellularFailed || millis() - cellularFailedAt >= 60000)) {
+    received = readCellularFirmwareChunk(url, chunk, length);
+    cellularFailed = !received;
+    if (!received) cellularFailedAt = millis();
+  } else if (!cellularEnabled) {
+    cellularFailed = true;
+  }
+  if (!received) {
+    if (!firmwareWifiNeeded() || WiFi.status() != WL_CONNECTED) return;
+    received = readWifiChunk(url, length);
+  }
+  if (received) {
+    if (!target) {
+      const auto *partition = esp_ota_get_next_update_partition(nullptr);
+      if (partition && esp_ota_begin(partition, pending.size, &handle) == ESP_OK) {
+        target = partition;
+        mbedtls_sha256_init(&hash);
+        if (mbedtls_sha256_starts(&hash, 0) != 0) resetDownload();
+      }
+    }
+    if (target && mbedtls_sha256_update(&hash, chunk, length) == 0 &&
+        esp_ota_write(handle, chunk, length) == ESP_OK) {
+      offset += length;
+      if (offset < pending.size) return;
+      if (finishDownload()) {
+        Serial.println("Firmware verified. Rebooting into the OTA slot.");
+        ESP.restart();
+        return;
+      }
+    }
+    resetDownload();
   }
   lastAttempt = millis();
   attempted = true;
-  Serial.println("OTA download or image verification failed. Keeping the current firmware.");
+  Serial.println("OTA transfer paused or image verification failed. Keeping the current firmware.");
 }

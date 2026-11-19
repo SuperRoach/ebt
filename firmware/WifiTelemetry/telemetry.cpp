@@ -673,6 +673,32 @@ void sendQueued(unsigned long pollStarted) {
 }
 }  // namespace
 
+bool readCellularFirmwareChunk(const String &url, uint8_t *data, size_t length) {
+  if (!startModemHttp()) return false;
+  const bool configured = modemOk(String("AT+HTTPPARA=\"URL\",\"") + url + "\"");
+  String response;
+  int method, status, bytes;
+  const bool ready = configured && command("AT+HTTPACTION=0", "+HTTPACTION:", response, 1500) &&
+      (!response.isEmpty() || modemReply("+HTTPACTION:", response, 8000, nullptr)) &&
+      sscanf(response.c_str(), "%d,%d,%d", &method, &status, &bytes) == 3 &&
+      method == 0 && status == 200 && bytes == static_cast<int>(length) &&
+      command((String("AT+HTTPREAD=0,") + length).c_str(), nullptr, response, 1500) &&
+      modemReply("+HTTPREAD:", response, 1500, nullptr) && response.toInt() == bytes;
+  size_t received = 0;
+  if (ready) {
+    const auto started = millis();
+    while (received < length && millis() - started < 2500) {
+      const int byte = modem.read();
+      if (byte < 0) delay(1);
+      else data[received++] = static_cast<uint8_t>(byte);
+    }
+  }
+  if (received == length && modemReply("+HTTPREAD:", response, 1000, nullptr) && response == "0" &&
+      modemOk(String("AT+HTTPPARA=\"URL\",\"") + EBT_API_URL + "\"")) return true;
+  modemHttpReady = false;
+  return false;
+}
+
 void setup() {
   Serial.begin(baud);
   beginFirmwareTrial();
@@ -727,7 +753,7 @@ void loop() {
   if (wifiOnly || lteFailures >= 3 || firmwareWifiNeeded()) serviceWifi();
   if (wifiOnly || clockReady()) sendQueued(pollStarted);
   if (gpsStatusReason && millis() - lastFreshFixAt >= gpsLossInterval) sendNoGpsStatus(gpsStatusReason);
-  serviceFirmwareUpdate();
+  serviceFirmwareUpdate(!wifiOnly && clockReady());
   const auto elapsed = millis() - pollStarted;
   if (elapsed < pollInterval) delay(pollInterval - elapsed);
 }

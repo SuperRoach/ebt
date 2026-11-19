@@ -207,7 +207,7 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
     }
   });
 
-  app.get<{ Params: { id: string } }>("/api/v1/firmware/releases/:id", {
+  app.get<{ Params: { id: string }; Querystring: { offset?: string; length?: string } }>("/api/v1/firmware/releases/:id", {
     schema: { params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } } },
   }, async (request, reply) => {
     const key = request.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{16,128})$/i)?.[1];
@@ -220,11 +220,19 @@ export async function buildApp(db: PrismaClient, logger = false, adminToken = pr
         !timingSafeEqual(Buffer.from(assignment.device.apiKeyHash, "hex"), Buffer.from(hashKey(key), "hex"))) {
       return reply.code(404).send({ error: "Firmware update not available for this device" });
     }
+    const { offset, length } = request.query;
+    const chunk = offset !== undefined || length !== undefined;
+    const start = chunk && /^\d{1,8}$/.test(offset ?? "") ? Number(offset) : chunk ? -1 : 0;
+    const bytes = chunk && /^\d{1,5}$/.test(length ?? "") ? Number(length) : chunk ? 0 : assignment.release.sizeBytes;
+    if (start < 0 || bytes < 1 || (chunk && bytes > 16384) || start + bytes > assignment.release.sizeBytes) {
+      return reply.code(416).send({ error: "Invalid firmware byte range" });
+    }
     reply.header("Content-Type", "application/octet-stream");
-    reply.header("Content-Length", assignment.release.sizeBytes);
+    reply.header("Content-Length", bytes);
     reply.header("Content-SHA256", assignment.release.sha256);
     reply.header("Cache-Control", "no-store");
-    return reply.send(createReadStream(join(firmwareDirectory, `${assignment.release.id}.bin`)));
+    return reply.send(createReadStream(join(firmwareDirectory, `${assignment.release.id}.bin`),
+      { start, end: start + bytes - 1 }));
   });
 
   app.post<{ Params: { id: string }; Body: { releaseId: string; status: string; message?: string } }>("/api/v1/devices/:id/firmware-status", {
