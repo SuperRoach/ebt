@@ -6,9 +6,9 @@
 
 #ifndef EBT_FIRMWARE_VERSION
 #if EBT_LTE_ENABLED
-#define EBT_FIRMWARE_VERSION "dual-link-0.5.19-cellular-ota"
+#define EBT_FIRMWARE_VERSION "dual-link-0.5.25-storage"
 #else
-#define EBT_FIRMWARE_VERSION "wifi-only-0.5.19-cellular-ota"
+#define EBT_FIRMWARE_VERSION "wifi-only-0.5.25-storage"
 #endif
 #endif
 

@@ -36,13 +36,16 @@ bool matches(const char *value, size_t length, bool uuid = false) {
   return true;
 }
 
-constexpr size_t chunkSize = 8192;
+constexpr size_t chunkSize = 16384;
+constexpr size_t cellularFallbackChunkSize = 8192;
 uint8_t chunk[chunkSize];
 esp_ota_handle_t handle;
 const esp_partition_t *target = nullptr;
 mbedtls_sha256_context hash;
 size_t offset = 0;
+unsigned long lastChunkWrittenAt;
 bool cellularFailed = false;
+size_t cellularChunkSize = chunkSize;
 unsigned long cellularFailedAt;
 
 void resetDownload() {
@@ -138,32 +141,47 @@ void acceptFirmwareOffer(JsonVariantConst offer) {
   if (pending.id != id) {
     resetDownload();
     cellularFailed = false;
+    cellularChunkSize = chunkSize;
     attempted = false;
   }
   pending = {id, digest, size};
 }
 
 bool firmwareWifiNeeded() {
-  return !pending.id.isEmpty() && cellularFailed &&
-         (!attempted || millis() - lastAttempt >= 60000);
+  return !pending.id.isEmpty() &&
+         (WiFi.status() == WL_CONNECTED ||
+          (cellularFailed && (!attempted || millis() - lastAttempt >= 60000)));
 }
 
 void serviceFirmwareUpdate(bool cellularEnabled) {
   if (pending.id.isEmpty() || (attempted && millis() - lastAttempt < 60000)) return;
-  const size_t length = min(chunkSize, pending.size - offset);
-  const String url = origin + "/api/v1/firmware/releases/" + pending.id +
-                     "?offset=" + String(offset) + "&length=" + String(length);
-  bool received = false;
-  if (cellularEnabled && (!cellularFailed || millis() - cellularFailedAt >= 60000)) {
-    received = readCellularFirmwareChunk(url, chunk, length);
-    cellularFailed = !received;
-    if (!received) cellularFailedAt = millis();
-  } else if (!cellularEnabled) {
-    cellularFailed = true;
-  }
+  const auto started = millis();
+  const auto gap = offset ? started - lastChunkWrittenAt : 0;
+  const size_t remaining = pending.size - offset;
+  size_t length = min(chunkSize, remaining);
+  const String chunkUrl = origin + "/api/v1/firmware/releases/" + pending.id +
+                          "?offset=" + String(offset) + "&length=";
+  const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+  const bool receivedOnWifi = wifiConnected && readWifiChunk(chunkUrl + String(length), length);
+  bool received = receivedOnWifi;
   if (!received) {
-    if (!firmwareWifiNeeded() || WiFi.status() != WL_CONNECTED) return;
-    received = readWifiChunk(url, length);
+    if (cellularEnabled && (!cellularFailed || millis() - cellularFailedAt >= 60000)) {
+      length = min(cellularChunkSize, remaining);
+      received = readCellularFirmwareChunk(chunkUrl + String(length), chunk, length);
+      if (!received && length > cellularFallbackChunkSize) {
+        length = cellularFallbackChunkSize;
+        received = readCellularFirmwareChunk(chunkUrl + String(length), chunk, length);
+        if (received) {
+          cellularChunkSize = cellularFallbackChunkSize;
+          Serial.println("OTA using 8 KiB chunks on 4G for this release.");
+        }
+      }
+      cellularFailed = !received;
+      if (!received) cellularFailedAt = millis();
+    } else if (!cellularEnabled) {
+      cellularFailed = true;
+    }
+    if (!received && !wifiConnected) return;
   }
   if (received) {
     if (!target) {
@@ -177,6 +195,10 @@ void serviceFirmwareUpdate(bool cellularEnabled) {
     if (target && mbedtls_sha256_update(&hash, chunk, length) == 0 &&
         esp_ota_write(handle, chunk, length) == ESP_OK) {
       offset += length;
+      lastChunkWrittenAt = millis();
+      Serial.printf("OTA chunk stored: %u/%u bytes over %s, gap=%lu ms, elapsed=%lu ms\n",
+                    static_cast<unsigned>(offset), static_cast<unsigned>(pending.size),
+                    receivedOnWifi ? "Wi-Fi" : "4G", gap, lastChunkWrittenAt - started);
       if (offset < pending.size) return;
       if (finishDownload()) {
         Serial.println("Firmware verified. Rebooting into the OTA slot.");

@@ -1,0 +1,8 @@
+# Working on tracker firmware
+
+Use the [firmware guide](README.md) for board settings, Arduino CLI builds and the OTA procedure.
+
+- `WifiTelemetry` targets one GNSS poll per second on LTE and Wi-Fi. Modem commands and uploads run synchronously, so the interval between reported fixes can be longer. Queue fixes on microSD when available, prioritize the newest capture, and retain each capture's original sequence when retrying.
+- Keep valid coordinates and a usable GPS capture time as the position requirements. Missing speed, heading, satellite count or battery voltage is represented by `null`. A blank modem date can be recovered using GPS time of day and the synchronized UTC clock within the existing freshness bounds. Failed GPS polls can produce a live status ping after 15 seconds without a fresh fix, then about every 24 seconds. Only those pings carry `gpsStatusReason`.
+- Build separately for `lps-ebt-01` and `lps-ebt-02` using their matching private profiles. The Wi-Fi hostname is the device ID. Verify the physical board's known USB identity before writing. Use the OTA partition layout for USB bootstrap and recovery. Keep the headers and binaries private.
+- OTA offers arrive with telemetry acknowledgements. The tracker downloads and verifies the HTTPS image over Wi-Fi, boots the spare slot and needs a telemetry acknowledgement within the three-minute trial window to confirm it. Use the matching firmware version when assigning the app binary and verify a fresh check-in, then look for any reversion to the older version. Deploy the compatible server first when a firmware change adds wire fields or values.

@@ -6,7 +6,11 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_random.h>
+#include <cerrno>
 #include <fcntl.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -23,6 +27,43 @@ constexpr unsigned long baud = 115200;
 constexpr unsigned long pollInterval = 1000;
 constexpr unsigned long gpsLossInterval = 15000;
 HardwareSerial modem(1);
+constexpr unsigned int cardCaptureQueueCapacity = 8;
+struct CaptureRecord {
+  char payload[1024]{};
+};
+
+struct DeviceJob {
+  void (*run)(void *);
+  void *context;
+  TaskHandle_t caller;
+  const char *label;
+};
+
+QueueHandle_t captures;
+QueueHandle_t gpsStatus;
+QueueHandle_t modemJobs;
+QueueHandle_t storageJobs;
+QueueHandle_t ramDelivery;
+TaskHandle_t storageOwner;
+
+// A job and its context live on the delivery task's stack until the modem
+// owner signals completion. Jobs execute in full between due GPS polls.
+template <typename Work>
+void onModem(const char *label, Work &work) {
+  DeviceJob job{[](void *context) { (*static_cast<Work *>(context))(); },
+               &work, xTaskGetCurrentTaskHandle(), label};
+  xQueueSend(modemJobs, &job, portMAX_DELAY);
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+}
+
+template <typename Work>
+void onStorage(Work &work) {
+  DeviceJob job{[](void *context) { (*static_cast<Work *>(context))(); },
+                &work, xTaskGetCurrentTaskHandle(), nullptr};
+  xQueueSend(storageJobs, &job, portMAX_DELAY);
+  xTaskNotifyGive(storageOwner);
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+}
 
 bool modemReply(const char *prefix, String &data, unsigned long timeout,
                 const char *terminal = "OK") {
@@ -97,7 +138,7 @@ bool coordinate(const String &field, const String &hemisphere, char positive, ch
 #endif
 constexpr char deviceId[] = EBT_DEVICE_ID;
 constexpr char queueDir[] = "/ebt-queue";
-constexpr size_t maxRecordSize = 1024;
+constexpr size_t maxRecordSize = sizeof(CaptureRecord::payload);
 constexpr int uploadsPerPoll = 8;
 char bootId[33], sessionId[33];
 uint32_t counter = 0;
@@ -275,7 +316,7 @@ const char *readGpsFix(GpsFix &fix, unsigned long timeout) {
   return nullptr;
 }
 
-const char *capture() {
+const char *capture(String &payload) {
   const auto started = millis();
   GpsFix fix;
   if (const char *reason = readGpsFix(fix, 10000)) return reason;
@@ -330,7 +371,7 @@ const char *capture() {
   if (satelliteCountAvailable) sample["satelliteCount"] = static_cast<int>(satellites);
   else sample["satelliteCount"] = nullptr;
   if (sameFix && number(gnss[15], hdop) && hdop >= 0) sample["hdop"] = hdop;
-  serializeJson(batch, pending);
+  serializeJson(batch, payload);
   lastTimestamp = fix.timestamp;
   if (fix.inferredDate) Serial.println("GPS fix accepted with date inferred from UTC clock");
   if (satelliteCountAvailable) {
@@ -352,15 +393,25 @@ const char *capture() {
 bool queueOnCard(const String &payload) {
   char filename[64];
   // A separate file per fix lets us remove an acknowledged record independently.
-  snprintf(filename, sizeof(filename), "%s/%s-%010lu.json", queueDir, bootId, (unsigned long)counter);
+  JsonDocument batch;
+  if (deserializeJson(batch, payload)) return false;
+  const char *sequence = batch["samples"][0]["sequence"];
+  if (!sequence || strlen(sequence) != 43) return false;
+  snprintf(filename, sizeof(filename), "%s/%.32s-%s.json", queueDir, sequence, sequence + 33);
   const String path = String("/sdcard") + filename;
   const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (fd < 0) return false;
+  if (fd < 0) {
+    Serial.printf("microSD open failed (errno=%d)\n", errno);
+    return false;
+  }
   const String record = payload + '\n';
-  const bool synced = write(fd, record.c_str(), record.length()) == static_cast<ssize_t>(record.length()) &&
-                      fsync(fd) == 0;
+  const bool written = write(fd, record.c_str(), record.length()) == static_cast<ssize_t>(record.length());
+  const bool synced = written && fsync(fd) == 0;
+  const int writeError = synced ? 0 : errno;
   const bool closed = close(fd) == 0;
   if (!synced || !closed) {
+    Serial.printf("microSD %s failed (errno=%d)\n",
+                  !written ? "write" : !synced ? "sync" : "close", synced ? errno : writeError);
     unlink(path.c_str());
     return false;
   }
@@ -546,26 +597,31 @@ bool sendPayload(JsonDocument &batch) {
   String payload;
   if (!wifiOnly && (lteFailures < 3 || millis() - lastLteFailure >= lteRetryInterval)) {
     batch["transport"] = "4g";
-    // Measure the upload link, including when replaying queued positions.
-    static unsigned long lastSignalQuery = 0;
-    static int signal = 99;
-    if (lastSignalQuery == 0 || millis() - lastSignalQuery >= 15000) {
-      lastSignalQuery = millis();
-      String response;
-      int rssi, ber;
-      signal = command("AT+CSQ", "+CSQ:", response, 1000) &&
-               sscanf(response.c_str(), "%d,%d", &rssi, &ber) == 2 && rssi >= 0 && rssi <= 31
-                 ? rssi : 99;
-    }
-    if (signal != 99) batch["cellularSignal"]["rssiDbm"] = -113 + 2 * signal;
-    serializeJson(batch, payload);
-    if (sendCellular(payload, sequence, currentVersion)) {
+    bool sent = false;
+    auto upload = [&] {
+      // Measure the upload link, including when replaying queued positions.
+      static unsigned long lastSignalQuery = 0;
+      static int signal = 99;
+      if (lastSignalQuery == 0 || millis() - lastSignalQuery >= 15000) {
+        lastSignalQuery = millis();
+        String response;
+        int rssi, ber;
+        signal = command("AT+CSQ", "+CSQ:", response, 1000) &&
+                 sscanf(response.c_str(), "%d,%d", &rssi, &ber) == 2 && rssi >= 0 && rssi <= 31
+                   ? rssi : 99;
+      }
+      if (signal != 99) batch["cellularSignal"]["rssiDbm"] = -113 + 2 * signal;
+      serializeJson(batch, payload);
+      sent = sendCellular(payload, sequence, currentVersion);
+      if (!sent) modemHttpReady = false;
+    };
+    onModem("LTE upload", upload);
+    if (sent) {
       lteFailures = 0;
       wifiTried = false;
       if (!firmwareWifiNeeded()) stopWifi();
       return true;
     }
-    modemHttpReady = false;
     lastLteFailure = millis();
     if (lteFailures < 3) ++lteFailures;
     Serial.println("LTE upload unavailable");
@@ -587,20 +643,26 @@ void sendNoGpsStatus(const char *reason) {
   static bool sent = false;
   const auto now = millis();
   if (!clockReady() || (sent && now - lastSent < interval)) return;
-  const time_t currentTime = time(nullptr);
-  tm utc{};
-  gmtime_r(&currentTime, &utc);
-  char timestamp[21];
-  if (!strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc)) return;
   JsonDocument batch;
-  auto sample = beginSample(batch, timestamp, readBatteryVoltage());
-  sample["fixValid"] = false;
-  sample["gpsStatusReason"] = reason;
-  sample["satelliteCount"] = 0;
-  sample["latitude"] = nullptr;
-  sample["longitude"] = nullptr;
-  sample["speedMps"] = nullptr;
-  sample["headingDeg"] = nullptr;
+  auto buildStatus = [&] {
+    const char *currentReason = nullptr;
+    if (xQueuePeek(gpsStatus, &currentReason, 0) != pdTRUE || currentReason != reason) return;
+    const time_t currentTime = time(nullptr);
+    tm utc{};
+    gmtime_r(&currentTime, &utc);
+    char timestamp[21];
+    if (!strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc)) return;
+    auto sample = beginSample(batch, timestamp, readBatteryVoltage());
+    sample["fixValid"] = false;
+    sample["gpsStatusReason"] = reason;
+    sample["satelliteCount"] = 0;
+    sample["latitude"] = nullptr;
+    sample["longitude"] = nullptr;
+    sample["speedMps"] = nullptr;
+    sample["headingDeg"] = nullptr;
+  };
+  onModem("GPS status", buildStatus);
+  if (batch.isNull()) return;
 
   if (sendPayload(batch)) {
     sent = true;
@@ -616,15 +678,21 @@ bool readSequence(const String &payload, JsonDocument &batch) {
 }
 
 bool sendQueuedFile(const String &path) {
-  File file = SD_MMC.open(path);
-  if (!file || file.size() > maxRecordSize) return false;
-  const String payload = file.readString();
-  file.close();
+  String payload;
+  auto load = [&] {
+    File file = SD_MMC.open(path);
+    if (file && file.size() <= maxRecordSize) payload = file.readString();
+  };
+  onStorage(load);
+
   JsonDocument batch;
   if (!payload.endsWith("\n") || !readSequence(payload, batch) || !sendPayload(batch)) return false;
-  if (SD_MMC.remove(path)) return true;
-  Serial.println("Could not remove acknowledged microSD record");
-  return false;
+
+  bool removed = false;
+  auto remove = [&] { removed = SD_MMC.remove(path); };
+  onStorage(remove);
+  if (!removed) Serial.println("Could not remove acknowledged microSD record");
+  return removed;
 }
 
 void sendQueued(unsigned long pollStarted) {
@@ -639,26 +707,29 @@ void sendQueued(unsigned long pollStarted) {
   String historyPaths[uploadsPerPoll - 1];
   int count = 0;
   if (cardReady) {
-    File directory = SD_MMC.open(queueDir);
-    while (directory && directory.isDirectory()) {
-      File file = directory.openNextFile();
-      if (!file) break;
-      if (file.isDirectory() || !String(file.name()).endsWith(".json") || file.size() > maxRecordSize) continue;
-      const String payload = file.readString();
-      JsonDocument batch;
-      if (!payload.endsWith("\n") || !readSequence(payload, batch)) continue;
-      const String timestamp = batch["samples"][0]["timestamp"].as<String>();
-      if (timestamp.length() != 20) continue;
-      String path = file.path();
-      if (timestamp > latestTimestamp) {
-        latestTimestamp = timestamp;
-        const String previousPath = latestPath;
-        latestPath = path;
-        path = previousPath;
+    auto scan = [&] {
+      File directory = SD_MMC.open(queueDir);
+      while (directory && directory.isDirectory()) {
+        File file = directory.openNextFile();
+        if (!file) break;
+        if (file.isDirectory() || !String(file.name()).endsWith(".json") || file.size() > maxRecordSize) continue;
+        const String payload = file.readString();
+        JsonDocument batch;
+        if (!payload.endsWith("\n") || !readSequence(payload, batch)) continue;
+        const String timestamp = batch["samples"][0]["timestamp"].as<String>();
+        if (timestamp.length() != 20) continue;
+        String path = file.path();
+        if (timestamp > latestTimestamp) {
+          latestTimestamp = timestamp;
+          const String previousPath = latestPath;
+          latestPath = path;
+          path = previousPath;
+        }
+        if (!path.isEmpty() && count < uploadsPerPoll - 1) historyPaths[count++] = path;
       }
-      if (!path.isEmpty() && count < uploadsPerPoll - 1) historyPaths[count++] = path;
-    }
-    directory.close();
+      directory.close();
+    };
+    onStorage(scan);
   }
 
   if (!latestPath.isEmpty() && !sendQueuedFile(latestPath)) return;
@@ -667,36 +738,98 @@ void sendQueued(unsigned long pollStarted) {
     pending = "";
   }
   const int historyLimit = uploadsPerPoll - (hasPending ? 1 : 0) - (latestPath.isEmpty() ? 0 : 1);
-  for (int i = 0; i < count && i < historyLimit && millis() - pollStarted < pollInterval; ++i) {
+  for (int i = 0; i < count && i < historyLimit && !uxQueueMessagesWaiting(captures) &&
+       millis() - pollStarted < pollInterval; ++i) {
     if (!sendQueuedFile(historyPaths[i])) break;
+  }
+}
+void storageTask(void *) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // Bound each pass so the uploader can read and acknowledge card records.
+    unsigned int waiting = uxQueueMessagesWaiting(captures);
+    while (waiting--) {
+      CaptureRecord record;
+      if (xQueuePeek(captures, &record, 0) != pdTRUE) break;
+      // Keep a capture queued if both the card and RAM fallback are unavailable.
+      if ((!cardReady || !queueOnCard(record.payload)) &&
+          xQueueSend(ramDelivery, &record, 0) != pdTRUE) break;
+      xQueueReceive(captures, &record, 0);
+    }
+    DeviceJob job;
+    if (xQueueReceive(storageJobs, &job, 0) == pdTRUE) {
+      job.run(job.context);
+      xTaskNotifyGive(job.caller);
+    }
+  }
+}
+
+void deliveryTask(void *) {
+  for (;;) {
+    const auto started = millis();
+    checkFirmwareTrial();
+    if (pending.isEmpty()) {
+      CaptureRecord record;
+      if (xQueueReceive(ramDelivery, &record, 0) == pdTRUE) {
+        pending = record.payload;
+        xTaskNotifyGive(storageOwner);
+      }
+    }
+    if (wifiOnly || lteFailures >= 3 || firmwareWifiNeeded() ||
+        (!clockReady() && millis() >= 24000)) serviceWifi();
+    if (wifiOnly || clockReady()) sendQueued(started);
+    const char *reason = nullptr;
+    if (xQueuePeek(gpsStatus, &reason, 0) == pdTRUE && reason) sendNoGpsStatus(reason);
+    serviceFirmwareUpdate(!wifiOnly && clockReady());
+    const auto elapsed = millis() - started;
+    if (elapsed < pollInterval) delay(pollInterval - elapsed);
+    else delay(1);
   }
 }
 }  // namespace
 
-bool readCellularFirmwareChunk(const String &url, uint8_t *data, size_t length) {
-  if (!startModemHttp()) return false;
-  const bool configured = modemOk(String("AT+HTTPPARA=\"URL\",\"") + url + "\"");
+static bool readCellularFirmwareChunkOnModem(const String &url, uint8_t *data, size_t length) {
+  const auto started = millis();
+  const bool configured = startModemHttp() &&
+      modemOk(String("AT+HTTPPARA=\"URL\",\"") + url + "\"");
+  const auto httpStarted = millis();
   String response;
   int method, status, bytes;
-  const bool ready = configured && command("AT+HTTPACTION=0", "+HTTPACTION:", response, 1500) &&
+  const bool httpReady = configured && command("AT+HTTPACTION=0", "+HTTPACTION:", response, 1500) &&
       (!response.isEmpty() || modemReply("+HTTPACTION:", response, 8000, nullptr)) &&
       sscanf(response.c_str(), "%d,%d,%d", &method, &status, &bytes) == 3 &&
-      method == 0 && status == 200 && bytes == static_cast<int>(length) &&
+      method == 0 && status == 200 && bytes == static_cast<int>(length);
+  const auto uartStarted = millis();
+  const bool ready = httpReady &&
       command((String("AT+HTTPREAD=0,") + length).c_str(), nullptr, response, 1500) &&
-      modemReply("+HTTPREAD:", response, 1500, nullptr) && response.toInt() == bytes;
+      modemReply("+HTTPREAD:", response, 1500, nullptr) && response.toInt() == static_cast<int>(length);
   size_t received = 0;
   if (ready) {
-    const auto started = millis();
-    while (received < length && millis() - started < 2500) {
+    const auto readStarted = millis();
+    while (received < length && millis() - readStarted < 2500) {
       const int byte = modem.read();
       if (byte < 0) delay(1);
       else data[received++] = static_cast<uint8_t>(byte);
     }
   }
-  if (received == length && modemReply("+HTTPREAD:", response, 1000, nullptr) && response == "0" &&
-      modemOk(String("AT+HTTPPARA=\"URL\",\"") + EBT_API_URL + "\"")) return true;
-  modemHttpReady = false;
-  return false;
+  const bool complete = received == length &&
+      modemReply("+HTTPREAD:", response, 1000, nullptr) && response == "0";
+  const auto restoreStarted = millis();
+  const bool restored = complete && modemOk(String("AT+HTTPPARA=\"URL\",\"") + EBT_API_URL + "\"");
+  const auto finished = millis();
+  if (!restored) modemHttpReady = false;
+  Serial.printf("OTA 4G read: %u/%u bytes, setup=%lu ms, HTTP=%lu ms, UART=%lu ms, restore=%lu ms, result=%s\n",
+                static_cast<unsigned>(received), static_cast<unsigned>(length), httpStarted - started,
+                uartStarted - httpStarted, restoreStarted - uartStarted, finished - restoreStarted,
+                restored ? "ok" : "failed");
+  return restored;
+}
+
+bool readCellularFirmwareChunk(const String &url, uint8_t *data, size_t length) {
+  bool received = false;
+  auto download = [&] { received = readCellularFirmwareChunkOnModem(url, data, length); };
+  onModem("LTE OTA chunk", download);
+  return received;
 }
 
 void setup() {
@@ -717,7 +850,7 @@ void setup() {
   randomId(sessionId);
   delay(1500);
   Serial.printf("EBT %s · %s · %s\n", EBT_FIRMWARE_VERSION, deviceId, wifiOnly ? "Wi-Fi only" : "LTE first");
-  Serial.println(cardReady ? "microSD queue ready" : "microSD unavailable. Using one RAM retry slot.");
+  Serial.println(cardReady ? "microSD queue ready" : "microSD unavailable. Using RAM for retries.");
   String response;
   while (!command("AT", nullptr, response, 1500)) {
     checkFirmwareTrial();
@@ -730,30 +863,78 @@ void setup() {
   }
   Serial.println("GNSS enabled");
   if (!wifiOnly) modemOk("AT+CTZU=1");
+  captures = xQueueCreate(cardReady ? cardCaptureQueueCapacity : 1, sizeof(CaptureRecord));
+  gpsStatus = xQueueCreate(1, sizeof(const char *));
+  modemJobs = xQueueCreate(1, sizeof(DeviceJob));
+  storageJobs = xQueueCreate(1, sizeof(DeviceJob));
+  ramDelivery = xQueueCreate(1, sizeof(CaptureRecord));
+  if (!captures || !gpsStatus || !modemJobs || !storageJobs || !ramDelivery ||
+      xTaskCreate(storageTask, "ebt-storage", 8192, nullptr, 1, &storageOwner) != pdPASS ||
+      xTaskCreate(deliveryTask, "ebt-delivery", 12288, nullptr, 1, nullptr) != pdPASS) {
+    Serial.println("Could not start telemetry tasks. Restarting.");
+    delay(1000);
+    ESP.restart();
+  }
 }
 
 void loop() {
-  checkFirmwareTrial();
-  const auto pollStarted = millis();
-  static unsigned long lastFreshFixAt = pollStarted;
-  const char *gpsStatusReason = nullptr;
-  if (pending.isEmpty()) {
-    gpsStatusReason = capture();
-    if (gpsStatusReason) Serial.printf("GPS skipped: %s\n", gpsStatusReason);
-    else lastFreshFixAt = millis();
+  static unsigned long lastPoll = millis() - pollInterval;
+  static unsigned long lastFreshFixAt = millis();
+  static unsigned long lastTimingReport = millis();
+  static unsigned long maxPollGap = 0, maxModemTime = 0;
+  static unsigned int peakQueue = 0, fullPolls = 0;
+
+  const auto now = millis();
+  if (now - lastPoll >= pollInterval) {
+    maxPollGap = max(maxPollGap, now - lastPoll);
+    lastPoll = now;
+    if (uxQueueSpacesAvailable(captures)) {
+      String payload;
+      const char *reason = capture(payload);
+      const auto finished = millis();
+      if (reason) {
+        Serial.printf("GPS skipped: %s\n", reason);
+      } else {
+        CaptureRecord record;
+        if (payload.length() < sizeof(record.payload)) {
+          payload.toCharArray(record.payload, sizeof(record.payload));
+          xQueueSend(captures, &record, 0);
+          xTaskNotifyGive(storageOwner);
+          peakQueue = max(peakQueue, static_cast<unsigned int>(uxQueueMessagesWaiting(captures)));
+        } else {
+          Serial.println("GPS capture exceeded the queue record size");
+        }
+        lastFreshFixAt = finished;
+      }
+      const char *status = finished - lastFreshFixAt >= gpsLossInterval ? reason : nullptr;
+      xQueueOverwrite(gpsStatus, &status);
+    } else {
+      ++fullPolls;
+      // Storage backpressure gives no evidence about current GNSS health.
+      const char *status = nullptr;
+      xQueueOverwrite(gpsStatus, &status);
+    }
+    if (!wifiOnly && !clockReady()) syncModemTime();
+    if (now - lastTimingReport >= 30000) {
+      Serial.printf("GPS timing: max poll gap=%lu ms, max modem job=%lu ms, queue peak=%u/%u, full polls=%u\n",
+                    maxPollGap, maxModemTime, peakQueue, cardReady ? cardCaptureQueueCapacity : 1U, fullPolls);
+      lastTimingReport = now;
+      maxPollGap = maxModemTime = 0;
+      peakQueue = uxQueueMessagesWaiting(captures);
+      fullPolls = 0;
+    }
   }
-  if (!clockReady() && !wifiOnly) {
-    syncModemTime();
-    if (!clockReady() && millis() >= 24000) serviceWifi();
+
+  const auto elapsed = millis() - lastPoll;
+  // Let one waiting transaction through even if this GPS poll overran.
+  const auto wait = elapsed < pollInterval ? pdMS_TO_TICKS(pollInterval - elapsed) : 0;
+  DeviceJob job;
+  if (xQueueReceive(modemJobs, &job, wait) == pdTRUE) {
+    const auto started = millis();
+    job.run(job.context);
+    const auto duration = millis() - started;
+    maxModemTime = max(maxModemTime, duration);
+    if (duration >= pollInterval) Serial.printf("%s took %lu ms\n", job.label, duration);
+    xTaskNotifyGive(job.caller);
   }
-  if (cardReady && !pending.isEmpty()) {
-    if (queueOnCard(pending)) pending = "";
-    else Serial.println("microSD write failed. Holding current fix in RAM.");
-  }
-  if (wifiOnly || lteFailures >= 3 || firmwareWifiNeeded()) serviceWifi();
-  if (wifiOnly || clockReady()) sendQueued(pollStarted);
-  if (gpsStatusReason && millis() - lastFreshFixAt >= gpsLossInterval) sendNoGpsStatus(gpsStatusReason);
-  serviceFirmwareUpdate(!wifiOnly && clockReady());
-  const auto elapsed = millis() - pollStarted;
-  if (elapsed < pollInterval) delay(pollInterval - elapsed);
 }
